@@ -16,3 +16,9 @@ node_modules/
 # Generated release files
 release/
 release.zip
+# Dependencies
+node_modules/
+
+# Generated release files
+release/
+release.zip
