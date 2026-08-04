@@ -1,0 +1,18 @@
+node_modules/
+dist/
+dist-electron/
+release/
+.tmp-test-data/
+.env
+data/
+*.log
+.DS_Store
+
+release.zip
+
+# Dependencies
+node_modules/
+
+# Generated release files
+release/
+release.zip

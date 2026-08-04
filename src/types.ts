@@ -1,0 +1,113 @@
+export type BlockType = "heading" | "paragraph" | "list_item" | "quote" | "code";
+
+export interface DocumentBlock {
+  id: string;
+  documentId: string;
+  type: BlockType;
+  content: string;
+  level?: number;
+  order: number;
+  contentHash: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentItem {
+  id: string;
+  userId: string;
+  title: string;
+  sourceType: "blank" | "txt" | "markdown" | "docx";
+  originalName?: string;
+  favorite: boolean;
+  status: "active" | "deleted";
+  blocks: DocumentBlock[];
+  createdAt: string;
+  updatedAt: string;
+  lastOpenedAt: string;
+  tipCount: number;
+}
+
+export interface TipMessage {
+  id: string;
+  tipId: string;
+  role: "user" | "assistant";
+  content: string;
+  model?: string;
+  skills?: SkillTrace[];
+  createdAt: string;
+}
+
+export interface SkillTrace {
+  name: "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review";
+  label: string;
+  detail: string;
+  sources?: Array<{ title: string; url: string }>;
+  status?: "success" | "warning" | "error";
+}
+
+export interface TipThread {
+  id: string;
+  userId: string;
+  documentId: string;
+  blockId: string;
+  selectedText: string;
+  startOffset: number;
+  endOffset: number;
+  prefixText: string;
+  suffixText: string;
+  selectedTextHash: string;
+  title: string;
+  summary: string;
+  status: "open" | "collapsed" | "resolved" | "archived";
+  anchorStatus: "valid" | "recovered" | "orphaned";
+  memoryEnabled: boolean;
+  messages: TipMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ApiProvider = "openai" | "deepseek" | "siliconflow" | "moonshot" | "zhipu" | "gemini" | "ollama" | "custom";
+
+export interface AiSettings {
+  provider: ApiProvider;
+  baseURL: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  apiKeyMasked: string;
+  systemPrompt: string;
+  webSearchEnabled: boolean;
+  searchBudgetMode: "free" | "quality";
+  searchApiKeyConfigured: boolean;
+  searchApiKeyMasked: string;
+  pythonEnabled: boolean;
+  reliabilityEnabled: boolean;
+}
+
+export interface AiSettingsInput {
+  provider: ApiProvider;
+  baseURL: string;
+  model: string;
+  apiKey?: string;
+  clearApiKey?: boolean;
+  systemPrompt: string;
+  webSearchEnabled: boolean;
+  searchBudgetMode: "free" | "quality";
+  searchApiKey?: string;
+  clearSearchApiKey?: boolean;
+  pythonEnabled: boolean;
+  reliabilityEnabled: boolean;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface SelectionInfo {
+  blockId: string;
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  rect: { left: number; top: number; width: number; height: number };
+}

@@ -1,0 +1,144 @@
+{
+  "users": [
+    {
+      "id": "40214ba1-7063-419d-8999-e63e4b5d9aeb",
+      "name": "林同学",
+      "email": "demo@aitip.local",
+      "passwordHash": "$2b$10$o9tdwxMTyzQTKpfYnvhPwuQqV./ZnJ.rc0o42GykrgDnNCvUG8IWO"
+    }
+  ],
+  "documents": [
+    {
+      "id": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+      "userId": "40214ba1-7063-419d-8999-e63e4b5d9aeb",
+      "title": "理解 Transformer 的注意力机制",
+      "sourceType": "blank",
+      "favorite": true,
+      "status": "active",
+      "blocks": [
+        {
+          "id": "1baf0e8d-1019-4698-9765-e42c80e8c431",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "heading",
+          "content": "Transformer：从注意力到理解",
+          "order": 0,
+          "level": 1,
+          "contentHash": "fc4fe4cde68e2438301637a18d57be21d9346a6383f5742b32c8390d7bc87e7f",
+          "createdAt": "2026-08-02T08:14:12.905Z",
+          "updatedAt": "2026-08-02T08:14:12.905Z"
+        },
+        {
+          "id": "0286c59a-cef8-49c8-84e1-20c6dc5e1176",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "paragraph",
+          "content": "Transformer 的核心洞见，是让模型在处理一个词时，能够直接观察序列中的其他位置，并动态判断哪些信息最值得关注。",
+          "order": 1,
+          "contentHash": "ee375a2795e3b1ef81ddf742ef55ef80207c35abbb1cf7d788e4beea74d891d8",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "05dbf459-df80-4819-8f4c-a153c4c5e5a2",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "heading",
+          "content": "自注意力在做什么？",
+          "order": 2,
+          "level": 2,
+          "contentHash": "a1a490e431d8c118df669fb6ef42faf614320955675a5dcebde6db266011762d",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "cf409d90-fc69-459f-851a-9459ab037def",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "paragraph",
+          "content": "自注意力机制允许序列中的每个 Token 根据相关性聚合其他 Token 的信息。它把每个输入映射成 Query、Key 和 Value，再用相似度决定信息汇集的权重。",
+          "order": 3,
+          "contentHash": "8082ff5c3cb31197a4ed95843a1311c4078640ba1f63c7ba7ba7a32ff5b58287",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "9700acf0-fe92-4a8d-87c5-bab7984604a2",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "quote",
+          "content": "注意力并不是记忆本身，而是一种按当前问题检索和组合信息的机制。",
+          "order": 4,
+          "contentHash": "9b73dca426f5b96f2d6bf53d85f5e416546223b9a28278380452045eed5b75bf",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "7a016e1d-7f9f-44ed-9f5e-1b6d8e5b925e",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "heading",
+          "content": "缩放点积注意力",
+          "order": 5,
+          "level": 2,
+          "contentHash": "4643860e3d17fa995a02734d684495569bf48d699bd60296336f870e418d785c",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "8e766944-7a61-441e-8ad3-6ef1f8dc2f67",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "paragraph",
+          "content": "计算过程可以概括为 Attention(Q, K, V) = softmax(QKᵀ / √dₖ)V。除以 √dₖ 可以避免维度较高时点积过大，进而缓解 softmax 梯度过小的问题。",
+          "order": 6,
+          "contentHash": "bcc79dbfab8e3180fcc7a1b03c8a82c800784b39929fa992a61b143304b0514c",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "5e828802-52ab-4ae1-a807-b8c45de05485",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "code",
+          "content": "scores = (Q @ K.transpose(-2, -1)) / sqrt(d_k)\nweights = softmax(scores, dim=-1)\noutput = weights @ V",
+          "order": 7,
+          "contentHash": "5a420f0a2c36e6442d0be51d90064ce22d9d25618567d461e5126bde11a2599d",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "280187f4-c5b0-4848-8c2f-3cf9601f8e8b",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "heading",
+          "content": "为什么需要多头？",
+          "order": 8,
+          "level": 2,
+          "contentHash": "8993404d24fac6d70f5512a3e59f924367cd7de81cecd1f1032078bf87399dc3",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        },
+        {
+          "id": "e376f82a-664c-44cf-8cfc-4d53d88d69a8",
+          "documentId": "e4ddc603-48bb-428c-b05f-49e7c043355a",
+          "type": "paragraph",
+          "content": "多头注意力让模型在不同表示子空间中同时寻找关系：一个头可能关注指代，一个头可能关注句法距离，另一个头则关注主题一致性。",
+          "order": 9,
+          "contentHash": "96fa3b16e48b55d68ecec2c8f68115ab63daf5835d515cb97c6b56f2d6682ced",
+          "createdAt": "2026-08-02T08:14:12.906Z",
+          "updatedAt": "2026-08-02T08:14:12.906Z"
+        }
+      ],
+      "createdAt": "2026-08-02T08:14:12.904Z",
+      "updatedAt": "2026-08-02T08:14:12.904Z",
+      "lastOpenedAt": "2026-08-02T08:14:12.904Z",
+      "tipCount": 0
+    }
+  ],
+  "tips": [],
+  "settings": [
+    {
+      "userId": "40214ba1-7063-419d-8999-e63e4b5d9aeb",
+      "provider": "openai",
+      "baseURL": "https://api.openai.com/v1",
+      "model": "gpt-5-mini",
+      "apiKey": "",
+      "systemPrompt": "accuracy",
+      "webSearchEnabled": true,
+      "searchApiKey": "tvly-test-secret-1234",
+      "pythonEnabled": true
+    }
+  ]
+}
