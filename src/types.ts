@@ -38,7 +38,7 @@ export interface TipMessage {
 }
 
 export interface SkillTrace {
-  name: "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review";
+  name: "professional_assessment" | "professional_review" | "authority_check" | "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review";
   label: string;
   detail: string;
   sources?: Array<{ title: string; url: string }>;
@@ -50,6 +50,10 @@ export interface TipThread {
   userId: string;
   documentId: string;
   blockId: string;
+  anchorType: "document" | "message";
+  parentTipId?: string;
+  anchorMessageId?: string;
+  depth: number;
   selectedText: string;
   startOffset: number;
   endOffset: number;
@@ -105,7 +109,18 @@ export interface User {
 }
 
 export interface SelectionInfo {
+  source: "document";
   blockId: string;
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  rect: { left: number; top: number; width: number; height: number };
+}
+
+export interface ChatSelectionInfo {
+  source: "message";
+  parentTipId: string;
+  messageId: string;
   text: string;
   startOffset: number;
   endOffset: number;

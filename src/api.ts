@@ -37,6 +37,8 @@ export const api = {
     request<{ settings: AiSettings }>("/settings", { method: "PUT", body: JSON.stringify(settings) }),
   testSettings: (settings: AiSettingsInput) =>
     request<{ ok: boolean; message: string }>("/settings/test", { method: "POST", body: JSON.stringify(settings) }),
+  submitFeedback: (category: "feature" | "accuracy" | "bug" | "usability" | "other", message: string) =>
+    request<{ ok: boolean; message: string }>("/feedback", { method: "POST", body: JSON.stringify({ category, message }) }),
   documents: (status = "active") => request<{ documents: DocumentItem[] }>(`/documents?status=${status}`),
   document: (id: string) => request<{ document: DocumentItem; tips: TipThread[] }>(`/documents/${id}`),
   createDocument: () => request<{ document: DocumentItem }>("/documents", { method: "POST", body: "{}" }),
@@ -51,9 +53,11 @@ export const api = {
   },
   createTip: (documentId: string, payload: { blockId: string; selectedText: string; startOffset: number; endOffset: number; prefixText: string; suffixText: string }) =>
     request<{ tip: TipThread }>(`/documents/${documentId}/tips`, { method: "POST", body: JSON.stringify(payload) }),
+  createChildTip: (parentTipId: string, payload: { messageId: string; selectedText: string; startOffset: number; endOffset: number; prefixText: string; suffixText: string }) =>
+    request<{ tip: TipThread }>(`/tips/${parentTipId}/children`, { method: "POST", body: JSON.stringify(payload) }),
   updateTip: (tipId: string, patch: Partial<Pick<TipThread, "status" | "title" | "memoryEnabled">>) =>
     request<{ tip: TipThread }>(`/tips/${tipId}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteTip: (tipId: string) => request<{ ok: boolean }>(`/tips/${tipId}`, { method: "DELETE" }),
+  deleteTip: (tipId: string) => request<{ ok: boolean; deletedIds: string[] }>(`/tips/${tipId}`, { method: "DELETE" }),
   streamTip: async (tipId: string, question: string, signal: AbortSignal, onChunk: (chunk: string) => void, onSkill?: (skill: SkillTrace) => void) => {
     const response = await fetch(`/api/tips/${tipId}/chat`, {
       method: "POST",
