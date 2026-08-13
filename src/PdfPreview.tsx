@@ -154,7 +154,7 @@ function PdfPageCanvas({ pdf, documentId, fingerprint, pageNumber, pageSource, t
     <div className="pdf-page-surface"><canvas ref={canvasRef} className="pdf-page-canvas" aria-label={labels.page(pageNumber, pdf.numPages)} /><div ref={textLayerRef} className="textLayer pdf-text-layer" onMouseUp={select} onKeyUp={select} />
       <div className="pdf-tip-overlay" data-overlay-version={overlayVersion}>{tips.flatMap((tip) => tip.pdfAnchor?.rects.map((rect, index) => ({ tip, index, position: overlayRect(rect) })) || []).map(({ tip, index, position }) => position && <span key={`${tip.id}-${index}`} className={`pdf-tip-highlight ${tip.anchorStatus}`} style={position} />)}{tips.map((tip) => {
         const positions = tip.pdfAnchor?.rects.map(overlayRect).filter(Boolean) as Array<{ left: number; top: number; width: number; height: number }> | undefined; const position = positions?.[positions.length - 1];
-        return position ? <button key={tip.id} className={`pdf-page-tip ${tip.status} ${tip.anchorStatus}`} style={{ left: position.left + position.width + 4, top: Math.max(2, position.top - 9) }} onClick={(event) => { event.stopPropagation(); onOpenTip(tip); }}><Sparkles size={9} />TIP{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</button> : null;
+        return position ? <button key={tip.id} data-pdf-tip-id={tip.id} className={`pdf-page-tip ${tip.status} ${tip.anchorStatus}`} style={{ left: position.left + position.width + 4, top: Math.max(2, position.top - 9) }} onClick={(event) => { event.stopPropagation(); onOpenTip(tip); }}><Sparkles size={9} />TIP{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</button> : null;
       })}</div>
     </div>
   </section>;

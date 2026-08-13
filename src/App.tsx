@@ -509,8 +509,11 @@ interface TipPanelProps { tip: TipThread; childTips: TipThread[]; streamingText:
 function TipPanel({ tip, childTips, streamingText, streamingSkills, isStreaming, error, contextMode = false, onSend, onStop, onCollapse, onFocus, onResolve, onDelete, onToggleMemory, onMessageSelection, onOpenTip }: TipPanelProps) {
   const { language, t } = useI18n();
   const [question, setQuestion] = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [tip.messages.length, streamingText]);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const messageList = messageListRef.current;
+    if (messageList) messageList.scrollTop = messageList.scrollHeight;
+  }, [tip.id, tip.messages.length, streamingText]);
   const submit = () => { if (!question.trim() || isStreaming) return; onSend(question.trim()); setQuestion(""); };
   const prompts = language === "en"
     ? [
@@ -529,12 +532,12 @@ function TipPanel({ tip, childTips, streamingText, streamingSkills, isStreaming,
     <aside className={`tip-panel ${contextMode ? "tip-panel-context" : ""}`} data-tip-panel={tip.id}>
       <header className="tip-head"><div><span className="tip-kicker"><Sparkles size={13} />{contextMode ? t("tip.parentConversation") : t("tip.independent")}</span><h2>{tip.title}</h2></div>{contextMode ? <button className="icon-button" onClick={onFocus} title={t("tip.focusConversation")}><ChevronLeft size={18} /></button> : <button className="icon-button" onClick={onCollapse} title={t("tip.collapse")}><PanelRightClose size={18} /></button>}</header>
       <div className="selected-quote"><p>{tip.anchorType === "message" ? t("tip.selectedChat") : tip.anchorType === "pdf" ? t("tip.selectedPdf", { page: tip.pdfAnchor?.pageNumber || 1 }) : t("tip.selected")}</p><blockquote>{tip.selectedText}</blockquote><div className="tip-context-controls"><span className={`anchor-badge ${tip.anchorStatus}`}>{tip.anchorStatus === "valid" ? t("tip.anchorValid") : tip.anchorStatus === "recovered" ? t("tip.anchorRecovered") : t("tip.anchorLost")}</span><button className={tip.memoryEnabled === false ? "" : "active"} onClick={onToggleMemory} title={t("tip.memoryHint")}><Brain size={12} />{tip.memoryEnabled === false ? t("tip.memoryOff") : t("tip.memoryOn")}</button></div></div>
-      <div className="message-list">
+      <div ref={messageListRef} className="message-list">
         {tip.messages.length === 0 && !streamingText && <div className="tip-welcome"><div><WandSparkles size={20} /></div><h3>{t("tip.start")}</h3><p>{t("tip.welcome")}</p><div className="tip-prompts">{prompts.map(([key, prompt]) => <button key={key} onClick={() => onSend(prompt)}>{t(key)}</button>)}</div></div>}
         {tip.messages.map((message) => <div className={`message ${message.role}`} key={message.id} data-message-id={message.id}>{message.role === "assistant" && <span className="assistant-mark"><Sparkles size={13} /></span>}<div>{message.role === "assistant" && <SkillResults skills={message.skills} />}<MessageContent tip={tip} message={message} childTips={childTips} onSelection={onMessageSelection} onOpenTip={onOpenTip} />{message.role === "assistant" && <button className="copy-message" onClick={() => void navigator.clipboard.writeText(message.content)}><Copy size={13} />{t("common.copy")}</button>}</div></div>)}
         {isStreaming && <div className="message assistant"><span className="assistant-mark"><Sparkles size={13} /></span><div><SkillResults skills={streamingSkills} />{streamingText ? renderMessage(streamingText) : streamingSkills.length ? <span className="tool-thinking">{t("tip.checkingTools")}</span> : <span className="thinking"><i /><i /><i /></span>}<span className="cursor" /></div></div>}
         {error && <div className="chat-error"><CircleHelp size={15} />{error}</div>}
-        <div ref={endRef} />
+        <div />
       </div>
       <div className="tip-composer">
         <textarea value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} placeholder={t("tip.followup")} rows={3} />

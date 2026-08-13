@@ -56,7 +56,7 @@ async function createWindow() {
   const smokeTest = process.argv.includes("--smoke-test");
   mainWindow = new BrowserWindow({
     width: 1440,
-    height: 920,
+    height: smokeTest ? 800 : 920,
     minWidth: 980,
     minHeight: 680,
     show: false,
@@ -168,6 +168,7 @@ async function createWindow() {
       document.querySelector('.settings-modal > header .icon-button').click();
       let pdfVisual = false;
       let ocrLayoutMaxDelta = 0;
+      let pdfTipOpenLayoutMaxDelta = 0;
       let pdfCanvasDataUrl = '';
       let pdfSecondCanvasDataUrl = '';
       if (pdfFixtureBase64) {
@@ -238,11 +239,38 @@ async function createWindow() {
           const ocrWord = await waitUntil(() => [...ocrPage.querySelectorAll('.pdf-ocr-word')].find(element => /OCR/i.test(element.textContent || '')), 'OCR selectable word');
           selectText(ocrWord, 0, Math.min(3, ocrWord.textContent.trim().length));
           (await waitUntil(() => document.querySelector('.selection-toolbar button'), 'first-page OCR selection toolbar')).click();
-          const ocrTipPanel = await waitUntil(() => document.querySelector('[data-tip-panel]'), 'first-page OCR Tip panel');
+          let ocrTipPanel = await waitUntil(() => document.querySelector('[data-tip-panel]'), 'first-page OCR Tip panel');
           const ocrTipId = ocrTipPanel.getAttribute('data-tip-panel');
           const persistedOcr = await fetch('/api/documents/' + ocrDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
           const persistedOcrTip = persistedOcr.tips.find(tip => tip.id === ocrTipId);
           if (persistedOcr.document.pdfStructure?.pages?.[0]?.source !== 'ocr' || persistedOcrTip?.anchorType !== 'pdf' || persistedOcrTip?.pdfAnchor?.source !== 'ocr' || !(persistedOcrTip?.pdfAnchor?.confidence > 0)) throw new Error('offline OCR output did not become a persisted PDF Tip authority');
+          const ocrComposer = ocrTipPanel.querySelector('.tip-composer textarea');
+          for (let turn = 1; turn <= 3; turn++) {
+            setTextArea(ocrComposer, 'Explain this selected text in more detail, turn ' + turn + '.');
+            ocrTipPanel.querySelector('.send-button').click();
+            await waitUntil(() => ocrTipPanel.querySelectorAll('.message.assistant .message-content').length >= turn && [...ocrTipPanel.querySelectorAll('.message.assistant .message-content')].every(element => element.textContent.length > 8), 'persisted OCR Tip answer ' + turn);
+          }
+          const persistedOcrConversation = await fetch('/api/documents/' + ocrDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+          if ((persistedOcrConversation.tips.find(tip => tip.id === ocrTipId)?.messages?.length || 0) < 6) throw new Error('PDF Tip reopening regression requires persisted multi-turn history');
+          ocrTipPanel.querySelector('.tip-head .icon-button').click();
+          const firstOcrTipMarker = await waitUntil(() => !document.querySelector('[data-tip-panel]') && document.querySelector('[data-pdf-tip-id="' + ocrTipId + '"]'), 'collapsed first-page OCR Tip marker');
+          firstOcrTipMarker.scrollIntoView({ block: 'center' });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+          const tipOpenScroll = document.querySelector('.editor-scroll'); const tipOpenNav = document.querySelector('.editor-nav'); const tipOpenTopbar = document.querySelector('.editor-topbar');
+          const sampleTipOpenLayout = () => ({ anchorTop: firstOcrTipMarker.getBoundingClientRect().top, scrollTop: tipOpenScroll.scrollTop, navTop: tipOpenNav.getBoundingClientRect().top, navBottom: tipOpenNav.getBoundingClientRect().bottom, topbarTop: tipOpenTopbar.getBoundingClientRect().top, windowScroll: window.scrollY, documentScroll: document.documentElement.scrollTop, bodyScroll: document.body.scrollTop });
+          const initialTipOpenLayout = sampleTipOpenLayout(); const tipOpenSamples = [initialTipOpenLayout];
+          const tipOpenTimer = setInterval(() => tipOpenSamples.push(sampleTipOpenLayout()), 8);
+          firstOcrTipMarker.click();
+          ocrTipPanel = await waitUntil(() => document.querySelector('[data-tip-panel="' + ocrTipId + '"]'), 'reopened OCR Tip panel');
+          await waitUntil(() => { const list = ocrTipPanel.querySelector('.message-list'); return list && list.scrollHeight - list.clientHeight - list.scrollTop <= 2 ? list : null; }, 'reopened PDF Tip internal message scroll');
+          tipOpenSamples.push(sampleTipOpenLayout()); clearInterval(tipOpenTimer);
+          const messageList = ocrTipPanel.querySelector('.message-list');
+          if (messageList.scrollHeight - messageList.clientHeight - messageList.scrollTop > 2) throw new Error('reopened PDF Tip did not scroll its own message history to the bottom');
+          const maximumRootScroll = tipOpenSamples.reduce((result, sample) => Math.max(result, Math.abs(sample.windowScroll), Math.abs(sample.documentScroll), Math.abs(sample.bodyScroll)), 0);
+          if (maximumRootScroll > 1) throw new Error('opening a PDF Tip with history scrolled the application root by ' + maximumRootScroll + 'px');
+          pdfTipOpenLayoutMaxDelta = tipOpenSamples.reduce((result, sample) => Math.max(result, Math.abs(sample.anchorTop - initialTipOpenLayout.anchorTop), Math.abs(sample.navTop - initialTipOpenLayout.navTop), Math.abs(sample.navBottom - initialTipOpenLayout.navBottom), Math.abs(sample.topbarTop - initialTipOpenLayout.topbarTop)), 0);
+          if (pdfTipOpenLayoutMaxDelta > 2) throw new Error('opening an existing PDF Tip moved the reading anchor or app columns by ' + pdfTipOpenLayoutMaxDelta + 'px');
           const scannedPages = [...document.querySelectorAll('[data-pdf-page]')];
           if (scannedPages.length !== 4) throw new Error('OCR layout regression requires a four-page scanned PDF');
           const layoutPage = scannedPages[2];
@@ -337,7 +365,7 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
     })()`);
     if (process.env.AI_TIP_PDF_SCREENSHOT_PATH && productBehavior.pdfCanvasDataUrl) {
       const png = String(productBehavior.pdfCanvasDataUrl).replace(/^data:image\/png;base64,/, "");
