@@ -17,6 +17,19 @@ import { buildTipForest, plainMessageContent, visibleTipLayout, type TipTreeNode
 type Screen = { type: "library"; tab: "all" | "favorites" | "trash" } | { type: "editor"; id: string };
 type SaveState = "saved" | "saving" | "error" | "offline";
 type Translate = (key: string, variables?: Record<string, string | number>) => string;
+type ImportPhase = "idle" | "dragging" | "saving" | "uploading";
+
+const DOCUMENT_ACCEPT = ".txt,.md,.markdown,.docx,.pdf";
+const SUPPORTED_DOCUMENT_EXTENSIONS = new Set(DOCUMENT_ACCEPT.split(","));
+
+function documentExtension(file: Pick<File, "name">) {
+  const dot = file.name.lastIndexOf(".");
+  return dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
+}
+
+function isSupportedDocument(file: Pick<File, "name">) {
+  return SUPPORTED_DOCUMENT_EXTENSIONS.has(documentExtension(file));
+}
 
 const I18nContext = createContext<{ language: Language; setLanguage: (language: Language) => void; t: Translate }>({ language: "zh-CN", setLanguage: () => {}, t: (key) => key });
 const useI18n = () => useContext(I18nContext);
@@ -258,9 +271,9 @@ function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSetting
   );
 }
 
-interface LibraryProps { user: User; screen: Extract<Screen, { type: "library" }>; onScreen: (screen: Screen) => void; onLogout: () => void; onSettings: () => void; }
+interface LibraryProps { user: User; screen: Extract<Screen, { type: "library" }>; onScreen: (screen: Screen) => void; onUpload: () => void; onLogout: () => void; onSettings: () => void; }
 
-function LibraryScreen({ user, screen, onScreen, onLogout, onSettings }: LibraryProps) {
+function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings }: LibraryProps) {
   const { language, t } = useI18n();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [trash, setTrash] = useState<DocumentItem[]>([]);
@@ -268,7 +281,6 @@ function LibraryScreen({ user, screen, onScreen, onLogout, onSettings }: Library
   const [sort, setSort] = useState("updated");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -283,12 +295,6 @@ function LibraryScreen({ user, screen, onScreen, onLogout, onSettings }: Library
   const create = async () => {
     try { const { document } = await api.createDocument(); onScreen({ type: "editor", id: document.id }); }
     catch (err) { setError(err instanceof Error ? err.message : t("library.createFailed")); }
-  };
-  const upload = async (file?: File) => {
-    if (!file) return;
-    setLoading(true);
-    try { const { document } = await api.upload(file); onScreen({ type: "editor", id: document.id }); }
-    catch (err) { setError(err instanceof Error ? err.message : t("library.importFailed")); setLoading(false); }
   };
   const patch = async (document: DocumentItem, change: Partial<DocumentItem>) => {
     try { await api.updateDocument(document.id, change); await load(); } catch (err) { setError(err instanceof Error ? err.message : t("library.operationFailed")); }
@@ -309,12 +315,11 @@ function LibraryScreen({ user, screen, onScreen, onLogout, onSettings }: Library
 
   return (
     <div className="app-layout">
-      <input ref={fileRef} type="file" accept=".txt,.md,.markdown,.docx,.pdf,application/pdf" hidden onChange={(e) => void upload(e.target.files?.[0])} />
-      <AppNav user={user} tab={screen.tab} counts={{ all: documents.length, favorite: documents.filter((d) => d.favorite).length, trash: trash.length }} onTab={(tab) => onScreen({ type: "library", tab })} onNew={() => void create()} onUpload={() => fileRef.current?.click()} onLogout={onLogout} onSettings={onSettings} />
+      <AppNav user={user} tab={screen.tab} counts={{ all: documents.length, favorite: documents.filter((d) => d.favorite).length, trash: trash.length }} onTab={(tab) => onScreen({ type: "library", tab })} onNew={() => void create()} onUpload={onUpload} onLogout={onLogout} onSettings={onSettings} />
       <main className="library-main">
         <header className="library-header">
           <div><p className="overline">{t("library.space")}</p><h1>{title}</h1><p>{screen.tab === "trash" ? t("library.trashDescription") : t("library.description")}</p></div>
-          <div className="header-actions"><button className="secondary" onClick={() => fileRef.current?.click()}><Upload size={17} />{t("nav.import")}</button><button className="primary" onClick={() => void create()}><Plus size={17} />{t("nav.new")}</button></div>
+          <div className="header-actions"><button className="secondary" onClick={onUpload}><Upload size={17} />{t("nav.import")}</button><button className="primary" onClick={() => void create()}><Plus size={17} />{t("nav.new")}</button></div>
         </header>
         <section className="library-toolbar">
           <div className="search-box"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("library.search")} />{query && <button onClick={() => setQuery("")}><X size={15} /></button>}</div>
@@ -322,7 +327,7 @@ function LibraryScreen({ user, screen, onScreen, onLogout, onSettings }: Library
         </section>
         {error && <div className="page-error"><CircleHelp size={17} />{error}<button onClick={() => void load()}>{t("common.retry")}</button></div>}
         {loading ? <div className="loading-state"><LoaderCircle className="spin" /><span>{t("library.loading")}</span></div> : filtered.length === 0 ? (
-          <div className="empty-state"><div><BookOpen size={28} /></div><h2>{query ? t("library.noMatch") : screen.tab === "trash" ? t("library.emptyTrash") : t("library.start")}</h2><p>{query ? t("library.shorter") : t("library.emptyHint")}</p>{screen.tab !== "trash" && !query && <button className="primary" onClick={() => void create()}><Plus size={17} />{t("nav.new")}</button>}</div>
+          <div className="empty-state"><div>{screen.tab === "trash" || query ? <BookOpen size={28} /> : <Upload size={28} />}</div><h2>{query ? t("library.noMatch") : screen.tab === "trash" ? t("library.emptyTrash") : t("library.start")}</h2><p>{query ? t("library.shorter") : t("library.emptyHint")}</p>{screen.tab !== "trash" && !query && <button className="primary" data-empty-import onClick={onUpload}><Upload size={17} />{t("nav.import")}</button>}</div>
         ) : (
           <section className="document-grid">
             {filtered.map((document) => (
@@ -556,8 +561,8 @@ function SaveIndicator({ state }: { state: SaveState }) {
   return <span className="save-state"><Check size={14} />{t("save.saved")}</span>;
 }
 
-interface EditorProps { id: string; onBack: () => void; onSettings: () => void; }
-function EditorScreen({ id, onBack, onSettings }: EditorProps) {
+interface EditorProps { id: string; onBack: () => void; onSettings: () => void; onRegisterSave: (save: (() => Promise<void>) | null) => void; }
+function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
   const { language, t } = useI18n();
   const [documentItem, setDocumentItem] = useState<DocumentItem | null>(null);
   const [tips, setTips] = useState<TipThread[]>([]);
@@ -575,6 +580,9 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
   const [navOpen, setNavOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const dirty = useRef(false);
+  const editVersion = useRef(0);
+  const documentRef = useRef<DocumentItem | null>(null);
+  const saveInFlight = useRef<Promise<void> | null>(null);
   const controller = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
@@ -582,16 +590,40 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
     catch (err) { setError(err instanceof Error ? err.message : t("editor.loadFailed")); }
   }, [id, t]);
   useEffect(() => { void load(); return () => controller.current?.abort(); }, [load]);
+  useLayoutEffect(() => { documentRef.current = documentItem; }, [documentItem]);
+
+  const saveNow = useCallback(async () => {
+    while (dirty.current) {
+      if (saveInFlight.current) {
+        await saveInFlight.current;
+        continue;
+      }
+      const snapshot = documentRef.current;
+      if (!snapshot) return;
+      const savingVersion = editVersion.current;
+      setSaveState(navigator.onLine ? "saving" : "offline");
+      const request = api.updateDocument(snapshot.id, { title: snapshot.title, blocks: snapshot.blocks }).then(() => {
+        if (editVersion.current === savingVersion) dirty.current = false;
+      });
+      saveInFlight.current = request;
+      try { await request; }
+      catch (error) { setSaveState(navigator.onLine ? "error" : "offline"); throw error; }
+      finally { if (saveInFlight.current === request) saveInFlight.current = null; }
+    }
+    setSaveState("saved");
+  }, []);
+
+  useEffect(() => {
+    onRegisterSave(saveNow);
+    return () => onRegisterSave(null);
+  }, [onRegisterSave, saveNow]);
 
   useEffect(() => {
     if (!dirty.current || !documentItem) return;
     setSaveState(navigator.onLine ? "saving" : "offline");
-    const timer = window.setTimeout(async () => {
-      try { await api.updateDocument(documentItem.id, { title: documentItem.title, blocks: documentItem.blocks }); dirty.current = false; setSaveState("saved"); }
-      catch { setSaveState(navigator.onLine ? "error" : "offline"); }
-    }, 900);
+    const timer = window.setTimeout(() => { void saveNow().catch(() => undefined); }, 900);
     return () => window.clearTimeout(timer);
-  }, [documentItem]);
+  }, [documentItem, saveNow]);
 
   useEffect(() => {
     const online = () => { if (dirty.current) setSaveState("saving"); };
@@ -602,20 +634,18 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
 
   const updateBlock = (blockId: string, content: string) => {
     setDocumentItem((current) => current ? { ...current, blocks: current.blocks.map((b) => b.id === blockId ? { ...b, content, updatedAt: new Date().toISOString() } : b) } : current);
-    dirty.current = true;
+    dirty.current = true; editVersion.current += 1;
   };
-  const updateTitle = (title: string) => { setDocumentItem((current) => current ? { ...current, title } : current); dirty.current = true; };
+  const updateTitle = (title: string) => { setDocumentItem((current) => current ? { ...current, title } : current); dirty.current = true; editVersion.current += 1; };
   const manualSave = async () => {
-    if (!documentItem) return;
-    setSaveState("saving");
-    try { await api.updateDocument(documentItem.id, { title: documentItem.title, blocks: documentItem.blocks }); dirty.current = false; setSaveState("saved"); }
+    try { await saveNow(); }
     catch { setSaveState("error"); }
   };
   const addBlock = (type: BlockType) => {
     if (!documentItem) return;
     const stamp = new Date().toISOString();
     const newBlock: DocumentBlock = { id: crypto.randomUUID(), documentId: documentItem.id, type, content: "", level: type === "heading" ? 2 : undefined, order: documentItem.blocks.length, contentHash: "", createdAt: stamp, updatedAt: stamp };
-    setDocumentItem({ ...documentItem, blocks: [...documentItem.blocks, newBlock] }); dirty.current = true;
+    setDocumentItem({ ...documentItem, blocks: [...documentItem.blocks, newBlock] }); dirty.current = true; editVersion.current += 1;
   };
   const createTip = async () => {
     if (!selection || !documentItem) return;
@@ -692,7 +722,7 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
     onMessageSelection={setSelection} onOpenTip={openTip}
   />;
   return (
-    <div className={`editor-shell ${activeTip ? "with-tip" : ""} ${!navOpen ? "nav-hidden" : ""}`}>
+    <div className={`editor-shell ${activeTip ? "with-tip" : ""} ${!navOpen ? "nav-hidden" : ""}`} data-editor-document={documentItem.id}>
       {navOpen && <aside className="editor-nav">
         <div className="editor-nav-top"><button className="back-button" onClick={onBack}><ChevronLeft size={17} />{t("editor.library")}</button><button className="icon-button" onClick={() => setNavOpen(false)}><PanelLeftClose size={17} /></button></div>
         <div className="mini-brand"><span className="brand-mark"><Sparkles size={14} /></span>AI Tip</div>
@@ -734,16 +764,94 @@ function AppContent() {
   const [checking, setChecking] = useState(Boolean(session.get()));
   const [screen, setScreen] = useState<Screen>({ type: "library", tab: "all" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [importPhase, setImportPhase] = useState<ImportPhase>("idle");
+  const [importError, setImportError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const saveBeforeImportRef = useRef<(() => Promise<void>) | null>(null);
+  const importBusyRef = useRef(false);
+  const dragDepthRef = useRef(0);
+  const registerSave = useCallback((save: (() => Promise<void>) | null) => { saveBeforeImportRef.current = save; }, []);
+
+  const importDocuments = useCallback(async (files: File[]) => {
+    if (!files.length || importBusyRef.current) return;
+    const unsupported = files.filter((file) => !isSupportedDocument(file));
+    if (unsupported.length) {
+      setImportError(t("import.unsupported", { names: unsupported.map((file) => file.name).join(", ") }));
+      setImportPhase("idle");
+      return;
+    }
+    importBusyRef.current = true;
+    setImportError("");
+    try {
+      setImportPhase("saving");
+      await saveBeforeImportRef.current?.();
+      setImportPhase("uploading");
+      let lastDocument: DocumentItem | null = null;
+      for (const file of files) ({ document: lastDocument } = await api.upload(file));
+      if (!lastDocument) throw new Error(t("library.importFailed"));
+      setSettingsOpen(false);
+      setScreen({ type: "editor", id: lastDocument.id });
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : t("library.importFailed"));
+    } finally {
+      importBusyRef.current = false;
+      setImportPhase("idle");
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (!user) return;
+    const containsFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types || []).includes("Files");
+    const dragEnter = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      event.preventDefault(); event.stopPropagation();
+      dragDepthRef.current += 1;
+      if (!importBusyRef.current) { setImportError(""); setImportPhase("dragging"); }
+    };
+    const dragOver = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      event.preventDefault(); event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    };
+    const dragLeave = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      event.preventDefault(); event.stopPropagation();
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0 && !importBusyRef.current) setImportPhase("idle");
+    };
+    const drop = (event: DragEvent) => {
+      if (!containsFiles(event)) return;
+      event.preventDefault(); event.stopPropagation();
+      dragDepthRef.current = 0;
+      void importDocuments(Array.from(event.dataTransfer?.files || []));
+    };
+    window.addEventListener("dragenter", dragEnter, true);
+    window.addEventListener("dragover", dragOver, true);
+    window.addEventListener("dragleave", dragLeave, true);
+    window.addEventListener("drop", drop, true);
+    return () => {
+      window.removeEventListener("dragenter", dragEnter, true);
+      window.removeEventListener("dragover", dragOver, true);
+      window.removeEventListener("dragleave", dragLeave, true);
+      window.removeEventListener("drop", drop, true);
+      dragDepthRef.current = 0;
+    };
+  }, [importDocuments, user]);
+
   useEffect(() => {
     if (!session.get()) return;
     api.me().then(({ user: current }) => setUser(current)).catch(() => session.clear()).finally(() => setChecking(false));
   }, []);
   if (checking) return <div className="loading-state fullscreen"><LoaderCircle className="spin" /><span>{t("app.entering")}</span></div>;
   if (!user) return <AuthScreen onAuth={setUser} />;
-  return <>{screen.type === "editor"
-    ? <EditorScreen id={screen.id} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} />
-    : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onLogout={() => { session.clear(); setSettingsOpen(false); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} />}
+  return <>
+    <input ref={fileInputRef} data-global-document-input type="file" accept={DOCUMENT_ACCEPT} multiple hidden onChange={(event) => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ""; void importDocuments(files); }} />
+    {screen.type === "editor"
+    ? <EditorScreen id={screen.id} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onRegisterSave={registerSave} />
+    : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onUpload={() => fileInputRef.current?.click()} onLogout={() => { session.clear(); setSettingsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} />}
     {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+    {importPhase !== "idle" && <div className={`document-drop-overlay ${importPhase}`} data-import-phase={importPhase}><div>{importPhase === "uploading" || importPhase === "saving" ? <LoaderCircle className="spin" size={28} /> : <Upload size={28} />}<h2>{importPhase === "dragging" ? t("import.dropTitle") : importPhase === "saving" ? t("import.saving") : t("import.uploading")}</h2><p>{importPhase === "dragging" ? t("import.dropHint") : t("import.wait")}</p></div></div>}
+    {importError && <div className="global-import-error" data-import-error><CircleHelp size={16} /><span>{importError}</span><button onClick={() => setImportError("")}><X size={14} /><span className="sr-only">{t("common.close")}</span></button></div>}
   </>;
 }
 

@@ -185,7 +185,14 @@ async function writeDb(db: Database) {
       searchApiKey: item.searchApiKey && secretCodec ? `safe:v1:${secretCodec.protect(item.searchApiKey)}` : item.searchApiKey
     })) };
     await writeFile(temp, JSON.stringify(persisted, null, 2), "utf8");
-    await rename(temp, storePath);
+    for (let attempt = 0; ; attempt += 1) {
+      try { await rename(temp, storePath); break; }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!code || !["EPERM", "EACCES", "EBUSY"].includes(code) || attempt >= 6) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      }
+    }
   });
   await writeQueue;
 }

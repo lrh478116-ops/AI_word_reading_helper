@@ -88,7 +88,8 @@ async function createWindow() {
     const ocrPdfFixturePath = path.join(appRoot, "scripts", "fixtures", "scanned-pdf.pdf.base64");
     const ocrPdfFixtureBase64 = existsSync(ocrPdfFixturePath) ? readFileSync(ocrPdfFixturePath, "utf8").replace(/\s+/g, "") : "";
     if (!pdfFixtureBase64 || !ocrPdfFixtureBase64) throw new Error("桌面验收所需的 PDF 测试文件缺失");
-    const productBehavior = await mainWindow.webContents.executeJavaScript(`(async () => {
+    let productBehavior;
+    try { productBehavior = await mainWindow.webContents.executeJavaScript(`(async () => {
       const pdfFixtureBase64 = ${JSON.stringify(pdfFixtureBase64)};
       const ocrPdfFixtureBase64 = ${JSON.stringify(ocrPdfFixtureBase64)};
       const capturePdfCanvas = ${JSON.stringify(Boolean(process.env.AI_TIP_PDF_SCREENSHOT_PATH))};
@@ -166,6 +167,61 @@ async function createWindow() {
       if (!document.querySelector('.logout-button')?.textContent?.includes('退出登录')) throw new Error('设置中的语言切换未传播到导航');
       if (localStorage.getItem('ai-tip-language') !== 'zh-CN') throw new Error('设置页语言选择没有持久化');
       document.querySelector('.settings-modal > header .icon-button').click();
+      window.__desktopSmokeStep = 'empty import';
+      const emptyImport = await waitFor('[data-empty-import]');
+      if (!emptyImport.textContent.includes('导入文档') || emptyImport.querySelector('.lucide-plus')) throw new Error('空文档库主操作仍是新建空白文档');
+      const acceptedExtensions = (document.querySelector('[data-global-document-input]')?.getAttribute('accept') || '').split(',').map(value => value.trim()).filter(Boolean);
+      if (JSON.stringify(acceptedExtensions) !== JSON.stringify(['.txt', '.md', '.markdown', '.docx', '.pdf'])) throw new Error('全局导入类型与服务端支持集不一致：' + JSON.stringify(acceptedExtensions));
+      document.querySelector('.header-actions .primary').click();
+      const dropSourceEditor = await waitFor('[data-editor-document]');
+      const dropSourceId = dropSourceEditor.getAttribute('data-editor-document');
+      setInput(document.querySelector('.document-title'), '拖放前必须保存的标题');
+      const dropSourceBlock = await waitFor('[contenteditable][data-block-id]');
+      dropSourceBlock.innerText = '这段最新修改必须在上传新文档前持久化。';
+      dropSourceBlock.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: dropSourceBlock.innerText }));
+      document.querySelector('.editor-controls .icon-button:last-child').click();
+      const dropTarget = await waitFor('.settings-modal');
+      const dispatchFileDrop = (target, files) => {
+        const transfer = new DataTransfer(); files.forEach(file => transfer.items.add(file));
+        target.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+        target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+        return !target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+      };
+      const documentsBeforeDrop = await fetch('/api/documents', { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+      window.__desktopSmokeStep = 'unsupported drop';
+      const unsupportedPrevented = dispatchFileDrop(dropTarget, [new File(['not a document'], 'unsafe.exe', { type: 'application/octet-stream' })]);
+      await waitFor('[data-import-error]');
+      const documentsAfterUnsupportedDrop = await fetch('/api/documents', { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+      if (!unsupportedPrevented || documentsAfterUnsupportedDrop.documents.length !== documentsBeforeDrop.documents.length || document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') !== dropSourceId) throw new Error('不支持文件拖放没有阻止默认导航或错误触发了上传');
+      const originalFetch = window.fetch.bind(window); const importTrace = []; let failNextSourceSave = true;
+      window.fetch = async (input, init = {}) => {
+        const url = String(input instanceof Request ? input.url : input); const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+        if (url.includes('/api/documents/' + dropSourceId) && method === 'PATCH') {
+          importTrace.push('PATCH:start');
+          if (failNextSourceSave) { failNextSourceSave = false; importTrace.push('PATCH:failed'); throw new Error('injected save failure'); }
+          const response = await originalFetch(input, init); importTrace.push('PATCH:done'); return response;
+        }
+        if (url.includes('/api/documents/import') && method === 'POST') importTrace.push('IMPORT:start');
+        return originalFetch(input, init);
+      };
+      const droppedMarkdown = new File(['# Drag import\\n\\nImported from the settings overlay.'], 'drag-import.md', { type: 'text/markdown' });
+      window.__desktopSmokeStep = 'failed-save drop';
+      dispatchFileDrop(dropTarget, [droppedMarkdown]);
+      await waitUntil(() => document.querySelector('[data-import-error]')?.textContent?.length > 0, 'save failure blocks drag import');
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const afterFailedSave = await originalFetch('/api/documents', { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+      if (afterFailedSave.documents.length !== documentsBeforeDrop.documents.length || importTrace.includes('IMPORT:start') || document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') !== dropSourceId) throw new Error('保存失败后仍上传或替换了原文档');
+      window.__desktopSmokeStep = 'successful drop';
+      dispatchFileDrop(dropTarget, [droppedMarkdown]);
+      const importedEditor = await waitUntil(() => { const editor = document.querySelector('[data-editor-document]'); return editor?.getAttribute('data-editor-document') !== dropSourceId ? editor : null; }, 'drag import opens returned document');
+      window.fetch = originalFetch;
+      const importedId = importedEditor.getAttribute('data-editor-document');
+      const savedSource = await originalFetch('/api/documents/' + dropSourceId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+      const importedDropDocument = await originalFetch('/api/documents/' + importedId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+      if (savedSource.document.title !== '拖放前必须保存的标题' || savedSource.document.blocks[0]?.content !== '这段最新修改必须在上传新文档前持久化。' || importedDropDocument.document.sourceType !== 'markdown' || !importedDropDocument.document.blocks.some(block => block.content.includes('Imported from the settings overlay.'))) throw new Error('拖放导入没有保证原文档保存或新文档解析');
+      if (importTrace.indexOf('PATCH:done') < 0 || importTrace.indexOf('IMPORT:start') < importTrace.indexOf('PATCH:done') || document.querySelector('.settings-modal')) throw new Error('拖放事务顺序不是保存完成后再上传，或成功后未显示新文档');
+      document.querySelector('.back-button').click();
+      await waitFor('.app-nav');
       let pdfVisual = false;
       let ocrLayoutMaxDelta = 0;
       let pdfTipOpenLayoutMaxDelta = 0;
@@ -365,8 +421,12 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
-    })()`);
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, emptyImportDefault: true, globalDropImport: true, unsupportedDropBlocked: true, saveFailureBlocked: true, saveBeforeDropUpload: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+    })()`); }
+    catch (error) {
+      const diagnostic = await mainWindow.webContents.executeJavaScript("({ step: window.__desktopSmokeStep || 'unknown', text: document.body.innerText.slice(-700), importError: document.querySelector('[data-import-error]')?.textContent || '', editor: document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') || '' })").catch(() => ({}));
+      throw new Error(`Desktop UI smoke failed at ${JSON.stringify(diagnostic)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (process.env.AI_TIP_PDF_SCREENSHOT_PATH && productBehavior.pdfCanvasDataUrl) {
       const png = String(productBehavior.pdfCanvasDataUrl).replace(/^data:image\/png;base64,/, "");
       writeFileSync(path.resolve(process.env.AI_TIP_PDF_SCREENSHOT_PATH), Buffer.from(png, "base64"));
