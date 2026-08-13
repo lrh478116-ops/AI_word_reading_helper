@@ -113,8 +113,10 @@ const mock = createServer(async (req, res) => {
   const last = messages[messages.length - 1] || {};
   const toolResult = last.role === "tool" ? String(last.content || "") : "";
   const isProfessionalClassifier = messages.some((item) => item.role === "system" && String(item.content || "").includes("PROFESSIONALISM_CLASSIFIER_V1"));
+  const hasLengthPrefix = messages.some((item) => item.role === "assistant" && String(item.content || "").includes("LONG_ANSWER_START"));
   if (!isProfessionalClassifier && body.tools) answerSystemPrompts.push(String(messages.find((item) => item.role === "system")?.content || ""));
   let message;
+  let finishReason = "stop";
   if (isProfessionalClassifier) {
     modelAssessmentRequests += 1;
     const assessmentInput = String(last.content || "");
@@ -125,6 +127,8 @@ const mock = createServer(async (req, res) => {
     } else {
       message = { role: "assistant", content: JSON.stringify({ professional: false, level: "general", domain: "通用", confidence: 88, requiresWebReview: false, reason: "未发现需要专业证据审查的复杂问题" }) };
     }
+  } else if (hasLengthPrefix) {
+    message = { role: "assistant", content: `LONG_ANSWER_END：${"后半段内容".repeat(180)}` };
   } else if (!body.tools) {
     const auditInput = String(last.content || "");
     message = { role: "assistant", content: auditInput.includes("UNSUPPORTED_CLAIM") ? "UNSUPPORTED: 该主张没有被提供的联网证据支持。" : "SUPPORTED: 回答中的结论与工具证据一致，并展示了来源。" };
@@ -132,7 +136,10 @@ const mock = createServer(async (req, res) => {
     message = { role: "assistant", content: toolResult.includes("官方版本说明") ? "根据搜索来源，最新稳定版是 2.0。[S1]" : "Python 精确计算结果为 0.3。" };
   } else {
     const question = [...messages].reverse().find((item) => item.role === "user")?.content || "";
-    if (String(question).includes("RCU grace period")) {
+    if (String(question).includes("LONG_ANSWER_TEST")) {
+      message = { role: "assistant", content: `LONG_ANSWER_START：${"前半段内容".repeat(180)}` };
+      finishReason = "length";
+    } else if (String(question).includes("RCU grace period")) {
       message = { role: "assistant", content: "根据联网证据，RCU 与 acquire-release 的可见性需要结合具体内存模型解释。[S1]" };
     } else if (String(question).includes("双碳目标")) {
       message = { role: "assistant", content: "政策评估应同时核对正式目标、政策工具、执行主体与地区实施数据。[S1][S2]" };
@@ -143,7 +150,7 @@ const mock = createServer(async (req, res) => {
       message = { role: "assistant", content: null, tool_calls: [{ id: search ? "call_search" : "call_python", type: "function", function: search ? { name: "web_search", arguments: JSON.stringify({ query: "产品最新稳定版本" }) } : { name: "python_calculate", arguments: JSON.stringify({ code: "decimal.Decimal('0.1') + decimal.Decimal('0.2')" }) } }] };
     }
   }
-  res.end(JSON.stringify({ id: "chatcmpl-test", object: "chat.completion", created: 0, model: "mock-model", choices: [{ index: 0, message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }] }));
+  res.end(JSON.stringify({ id: "chatcmpl-test", object: "chat.completion", created: 0, model: "mock-model", choices: [{ index: 0, message, finish_reason: message.tool_calls ? "tool_calls" : finishReason }] }));
 });
 
 const listen = (server) => new Promise((resolve, reject) => { server.listen(0, "127.0.0.1", () => resolve(server.address().port)); server.once("error", reject); });
@@ -309,6 +316,7 @@ try {
   const ordinaryEvents = await chat(created.tip.id, "周末怎样泡一杯清淡的茶？", token);
   const ordinarySearchesAfter = searchRequests;
   const highRiskEvents = await chat(created.tip.id, "这个药物剂量是否适合我？", token);
+  const longAnswerEvents = await chat(created.tip.id, "LONG_ANSWER_TEST：请生成需要自动续写的完整回答。", token);
   await Promise.all([
     chat(created.tip.id, "请计算 2 + 2", token),
     request(`/documents/${loaded.document.id}`, { method: "PATCH", body: JSON.stringify({ title: "并发写入已保留" }) }, token)
@@ -339,6 +347,7 @@ try {
   const assessmentFailure = assessmentFailureEvents.find((item) => item.type === "skill" && item.skill?.name === "professional_assessment");
   const assessmentFailureAnswer = assessmentFailureEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
   const ordinaryAssessment = ordinaryEvents.find((item) => item.type === "skill" && item.skill?.name === "professional_assessment");
+  const longAnswer = longAnswerEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
   if (!pythonSkill || !String(pythonSkill.skill.detail).includes("0.3")) throw new Error("Python 工具调用链测试失败");
   if (!searchSkill || searchSkill.skill.sources?.length !== 2) throw new Error("联网搜索工具调用链测试失败");
   if (!crossCheck || !originalFetch || !conflictCheck || !freshnessCheck || !securityCheck) throw new Error("研究可靠性流水线测试失败");
@@ -348,11 +357,12 @@ try {
   if (!cachedSearch || !cachedSearch.skill.label.includes("缓存") || !cachedSearch.skill.detail.includes("0 额度") || searchRequestsAfterCachedQuery !== 1) throw new Error("搜索缓存或额度保护测试失败");
   if (!professionalAssessment || professionalAssessment.skill.status !== "success" || !String(professionalAssessment.skill.detail).includes("模型评估 · 一般") || !String(professionalAssessment.skill.detail).includes("规则安全下限") || !String(professionalAssessment.skill.label).includes("专业")) throw new Error("模型将规则专业问题降级后，规则安全下限没有保持专业判断");
   if (!professionalSearch || !professionalReview || professionalReview.skill.status !== "success" || !professionalAnswer.includes("[S1]") || searchRequests < 3) throw new Error(`专业问题没有强制联网并通过最终审查：${JSON.stringify({ professionalSearch: professionalSearch?.skill, professionalReview: professionalReview?.skill, professionalAnswer, searchRequests })}`);
-  if (!unsupportedReview || unsupportedReview.skill.status !== "error" || unsupportedAnswer.includes("UNSUPPORTED_CLAIM") || !unsupportedAnswer.includes("审查未通过")) throw new Error(`未被证据支持的专业回答没有被阻断：${JSON.stringify({ unsupportedReview: unsupportedReview?.skill, unsupportedAnswer })}`);
+  if (!unsupportedReview || unsupportedReview.skill.status !== "warning" || !unsupportedAnswer.includes("UNSUPPORTED_CLAIM") || !unsupportedAnswer.includes("审查未通过") || !unsupportedAnswer.includes("请勿把未被证据支持的主张当作已证实事实")) throw new Error(`未被证据支持的专业回答没有保留原文并附加警告：${JSON.stringify({ unsupportedReview: unsupportedReview?.skill, unsupportedAnswer })}`);
   if (!policyAssessment || !String(policyAssessment.skill.detail).includes("模型评估") || !String(policyAssessment.skill.detail).includes("政策与公共治理") || policySearchesAfter - policySearchesBefore !== 1 || policyReview?.skill?.status !== "success" || !policyAnswer.includes("[S1]")) throw new Error(`模型识别的政策专业问题没有进入强制联网正式路径：${JSON.stringify({ assessment: policyAssessment?.skill, searches: policySearchesAfter - policySearchesBefore, review: policyReview?.skill, answer: policyAnswer })}`);
-  if (!assessmentFailure || assessmentFailure.skill.status !== "error" || !assessmentFailureAnswer.includes("专业程度评估失败") || assessmentFailureEvents.some((item) => item.type === "skill" && item.skill?.name === "web_search")) throw new Error(`模型专业度评估失败后仍被旧路径绕过：${JSON.stringify({ assessment: assessmentFailure?.skill, answer: assessmentFailureAnswer })}`);
+  if (!assessmentFailure || assessmentFailure.skill.status !== "warning" || !assessmentFailureAnswer || assessmentFailureAnswer.includes("本次不会继续生成回答") || assessmentFailureEvents.some((item) => item.type === "skill" && item.skill?.name === "web_search")) throw new Error(`模型专业度评估失败后没有以规则结果继续回答：${JSON.stringify({ assessment: assessmentFailure?.skill, answer: assessmentFailureAnswer })}`);
   if (!ordinaryAssessment || !String(ordinaryAssessment.skill.detail).includes("模型评估") || ordinarySearchesAfter !== ordinarySearchesBefore) throw new Error("普通生活问题不应消耗 Tavily 搜索额度");
-  if (!humanReview || humanReview.skill.status !== "error" || !highRiskAnswer.includes("不会给出个性化结论")) throw new Error("高风险证据不足阻断测试失败");
+  if (!humanReview || humanReview.skill.status !== "warning" || !highRiskAnswer.includes("重要提示") || highRiskAnswer.startsWith("这是医疗健康高风险问题，但")) throw new Error("高风险证据不足没有保留回答并附加人工复核提示");
+  if (!longAnswer.includes("LONG_ANSWER_START") || !longAnswer.includes("LONG_ANSWER_END") || longAnswer.indexOf("LONG_ANSWER_END") <= longAnswer.indexOf("LONG_ANSWER_START") || (longAnswer.match(/LONG_ANSWER_START/g) || []).length !== 1 || (longAnswer.match(/LONG_ANSWER_END/g) || []).length !== 1) throw new Error(`finish_reason=length 没有形成无重复的完整续写：${JSON.stringify({ length: longAnswer.length, start: longAnswer.slice(0, 40), end: longAnswer.slice(-40) })}`);
   if (!finalTip?.messages?.some((item) => item.skills?.some((skill) => skill.name === "web_search"))) throw new Error("技能记录未持久化");
 
   const nestedSourceTip = (await request(`/documents/${loaded.document.id}`, {}, token)).tips.find((item) => item.id === created.tip.id);
@@ -393,7 +403,7 @@ try {
   const blockedProfessionalEvents = await chat(freshTip.tip.id, "请从弱内存模型和线性一致性角度进行专业分析。", registered.token);
   const blockedProfessionalAnswer = blockedProfessionalEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
   const blockedProfessionalReview = blockedProfessionalEvents.find((item) => item.type === "skill" && item.skill?.name === "professional_review");
-  if (!blockedProfessionalEvents.some((item) => item.type === "skill" && item.skill?.name === "professional_assessment") || blockedProfessionalReview?.skill?.status !== "error" || !String(blockedProfessionalReview.skill.detail).includes("模型 API 未配置") || !blockedProfessionalAnswer.includes("联网审查")) throw new Error(`专业问题在联网未配置时没有阻断，或错误使用了发布者环境 API Key：${JSON.stringify({ events: blockedProfessionalEvents.filter((item) => item.type === "skill"), answer: blockedProfessionalAnswer })}`);
+  if (!blockedProfessionalEvents.some((item) => item.type === "skill" && item.skill?.name === "professional_assessment") || blockedProfessionalReview?.skill?.status !== "warning" || !String(blockedProfessionalReview.skill.detail).includes("模型 API 未配置") || !blockedProfessionalAnswer || blockedProfessionalAnswer.includes("回答已阻断")) throw new Error(`专业问题在联网未配置时没有继续给出明确标记的一般性回答，或错误使用了发布者环境 API Key：${JSON.stringify({ events: blockedProfessionalEvents.filter((item) => item.type === "skill"), answer: blockedProfessionalAnswer })}`);
 
   const feedback = await request("/feedback", { method: "POST", body: JSON.stringify({ category: "feature", message: "希望增加专业问题联网审查的状态说明。" }) }, token);
   if (!feedback.ok || feedbackPayloads.length !== 1 || JSON.stringify(feedbackPayloads[0]).includes("@qq.com") || "recipient" in feedbackPayloads[0] || "to" in feedbackPayloads[0]) throw new Error("建议中继或隐藏收件人测试失败");
@@ -402,7 +412,7 @@ try {
   process.env.AI_TIP_FEEDBACK_RELAY_URL = "";
   const unconfiguredFeedback = await fetch(`${base}/feedback`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${registered.token}` }, body: JSON.stringify({ category: "other", message: "中继未配置时，这段建议必须明确返回失败。" }) });
   if (unconfiguredFeedback.status !== 503) throw new Error("建议中继未配置时没有明确失败");
-  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, policyProfessionalReview: true, professionalReview: true, unsupportedBlocked: true, assessmentFailureBlocked: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, filenameMigration: true, pdfImport: true, pdfOriginalTip: true, pdfRecursiveTip: true, pdfOrphanChatBlocked: true, pdfAnnotationExport: true, pdfBytePreservation: true, uploadOver10Mb: true, uploadTempCleanup: true, englishPromptCausal: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, feedbackRelay: true, citationAudit: true, humanReview: true, persisted: true }));
+  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, policyProfessionalReview: true, professionalReview: true, unsupportedAnswerPreserved: true, assessmentFailureAnswered: true, outputLengthContinued: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, filenameMigration: true, pdfImport: true, pdfOriginalTip: true, pdfRecursiveTip: true, pdfOrphanChatBlocked: true, pdfAnnotationExport: true, pdfBytePreservation: true, uploadOver10Mb: true, uploadTempCleanup: true, englishPromptCausal: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, feedbackRelay: true, citationAudit: true, humanReview: true, persisted: true }));
 } finally {
   await new Promise((resolve) => appServer.close(resolve));
   await new Promise((resolve) => mock.close(resolve));

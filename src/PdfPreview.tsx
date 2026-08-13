@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Download, Image as ImageIcon, LayoutTemplate, LoaderCircle, ScanText, Sparkles } from "lucide-react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { api } from "./api";
+import { TipMarkerButton } from "./TipMarkerButton";
 import type { DocumentBlock, DocumentItem, PdfPageSource, PdfSelectionInfo, SelectionInfo, TipThread } from "./types";
 
 let pdfJsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
@@ -33,6 +34,9 @@ interface PdfLabels {
   runningOcr: string;
   ocrSource: (confidence: number) => string;
   page: (pageNumber: number, pageCount: number) => string;
+  tipPreview: string;
+  close: string;
+  openTip: (title: string) => string;
 }
 
 function offsetWithin(root: Node, node: Node, offset: number) {
@@ -154,7 +158,7 @@ function PdfPageCanvas({ pdf, documentId, fingerprint, pageNumber, pageSource, t
     <div className="pdf-page-surface"><canvas ref={canvasRef} className="pdf-page-canvas" aria-label={labels.page(pageNumber, pdf.numPages)} /><div ref={textLayerRef} className="textLayer pdf-text-layer" onMouseUp={select} onKeyUp={select} />
       <div className="pdf-tip-overlay" data-overlay-version={overlayVersion}>{tips.flatMap((tip) => tip.pdfAnchor?.rects.map((rect, index) => ({ tip, index, position: overlayRect(rect) })) || []).map(({ tip, index, position }) => position && <span key={`${tip.id}-${index}`} className={`pdf-tip-highlight ${tip.anchorStatus}`} style={position} />)}{tips.map((tip) => {
         const positions = tip.pdfAnchor?.rects.map(overlayRect).filter(Boolean) as Array<{ left: number; top: number; width: number; height: number }> | undefined; const position = positions?.[positions.length - 1];
-        return position ? <button key={tip.id} data-pdf-tip-id={tip.id} className={`pdf-page-tip ${tip.status} ${tip.anchorStatus}`} style={{ left: position.left + position.width + 4, top: Math.max(2, position.top - 9) }} onClick={(event) => { event.stopPropagation(); onOpenTip(tip); }}><Sparkles size={9} />TIP{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</button> : null;
+        return position ? <TipMarkerButton key={tip.id} tip={tip} pdfTipId={tip.id} className={`pdf-page-tip ${tip.status} ${tip.anchorStatus}`} style={{ left: position.left + position.width + 4, top: Math.max(2, position.top - 9) }} onOpen={onOpenTip} openLabel={labels.openTip(tip.title)} previewLabel={labels.tipPreview} closeLabel={labels.close}><Sparkles size={9} />TIP{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</TipMarkerButton> : null;
       })}</div>
     </div>
   </section>;

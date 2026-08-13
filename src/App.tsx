@@ -10,6 +10,7 @@ import { api, session } from "./api";
 import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type Language } from "./i18n";
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
+import { TipMarkerButton } from "./TipMarkerButton";
 import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
 import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, PdfSelectionInfo, PdfTableData, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import { buildTipForest, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
@@ -486,7 +487,7 @@ function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item:
           return <Tag key={cellIndex} data-table-cell={`${rowIndex}:${cellIndex}`} colSpan={metadata?.colSpan || 1} rowSpan={metadata?.rowSpan || 1} contentEditable suppressContentEditableWarning spellCheck onInput={(event) => editCell(rowIndex, cellIndex, event.currentTarget.innerText)}>{content}</Tag>;
         })}</tr>)}</tbody></table>
       </div>
-      {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <button key={tip.id} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onClick={() => onOpenTip(tip)} title={t("tip.open", { title: tip.summary || tip.title })}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</button>)}</div>}
+      {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <TipMarkerButton key={tip.id} tip={tip} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onOpen={onOpenTip} openLabel={t("tip.open", { title: tip.title })} previewLabel={t("tip.fullPreview")} closeLabel={t("common.close")}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</TipMarkerButton>)}</div>}
     </div>;
   }
   const Tag = item.type === "heading" ? (item.level === 1 ? "h1" : item.level === 3 ? "h3" : "h2") : item.type === "code" ? "pre" : item.type === "quote" ? "blockquote" : "p";
@@ -494,7 +495,7 @@ function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item:
     <div ref={rowRef} className={`block-row block-${item.type}`} data-block-row={item.id}>
       {item.type === "list_item" && <span className="list-bullet">•</span>}
       <Tag ref={ref as never} data-block-id={item.id} contentEditable suppressContentEditableWarning spellCheck onInput={(e) => onChange(item.id, { content: e.currentTarget.innerText })} onMouseUp={select} onKeyUp={select}>{item.content}</Tag>
-      {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <button key={tip.id} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onClick={() => onOpenTip(tip)} title={t("tip.open", { title: tip.summary || tip.title })}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</button>)}</div>}
+      {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <TipMarkerButton key={tip.id} tip={tip} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onOpen={onOpenTip} openLabel={t("tip.open", { title: tip.title })} previewLabel={t("tip.fullPreview")} closeLabel={t("common.close")}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</TipMarkerButton>)}</div>}
     </div>
   );
 }
@@ -561,7 +562,7 @@ function MessageContent({ tip, message, childTips, onSelection, onOpenTip }: { t
   for (const child of anchored) {
     if (child.startOffset < cursor || child.endOffset > content.length || content.slice(child.startOffset, child.endOffset) !== child.selectedText) continue;
     if (child.startOffset > cursor) pieces.push(<span key={`text-${cursor}`}>{renderMessageRange(message.content, cursor, child.startOffset, `text-${cursor}`)}</span>);
-    pieces.push(<mark className="chat-tip-anchor" data-chat-tip-anchor={child.id} key={child.id}>{renderMessageRange(message.content, child.startOffset, child.endOffset, `anchor-${child.id}`)}<button onClick={(event) => { event.stopPropagation(); onOpenTip(child); }} title={t("tip.open", { title: child.title })}><Sparkles size={9} /><span className="sr-only">Tip</span></button></mark>);
+    pieces.push(<mark className="chat-tip-anchor" data-chat-tip-anchor={child.id} key={child.id}>{renderMessageRange(message.content, child.startOffset, child.endOffset, `anchor-${child.id}`)}<TipMarkerButton tip={child} className="" onOpen={onOpenTip} openLabel={t("tip.open", { title: child.title })} previewLabel={t("tip.fullPreview")} closeLabel={t("common.close")}><Sparkles size={9} /><span className="sr-only">Tip</span></TipMarkerButton></mark>);
     cursor = child.endOffset;
   }
   if (cursor < content.length) pieces.push(<span key={`text-${cursor}`}>{renderMessageRange(message.content, cursor, content.length, `text-${cursor}`)}</span>);
@@ -842,7 +843,7 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
             <div className="page-meta"><span>{documentItem.sourceType === "blank" ? t("editor.personalNote") : t("editor.imported", { type: documentItem.sourceType.toUpperCase() })}</span><span>{t("editor.lastEdited", { time: timeAgo(documentItem.updatedAt, language, t) })}</span></div>
             <input className="document-title" value={documentItem.title} onChange={(e) => updateTitle(e.target.value)} placeholder={t("editor.untitled")} />
             <div className="document-rule" />
-            {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} blocks={documentItem.blocks} structure={documentItem.pdfStructure} tipsByBlock={tipsByBlock} onSelection={setSelection} onOpenTip={openTip} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), structured: t("pdf.structured"), original: t("pdf.original"), structureHint: t("pdf.structureHint"), tableHeuristic: (confidence) => t("pdf.tableHeuristic", { confidence }), imageAlt: (page) => t("pdf.imageAlt", { page }), structureFailed: (error) => t("pdf.structureFailed", { error }), visualOnly: t("pdf.visualOnly"), exportAnnotations: t("pdf.exportAnnotations"), exportingAnnotations: t("pdf.exportingAnnotations"), runOcr: t("pdf.runOcr"), runningOcr: t("pdf.runningOcr"), ocrSource: (confidence) => t("pdf.ocrSource", { confidence }), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }) }} /> : <>
+            {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} blocks={documentItem.blocks} structure={documentItem.pdfStructure} tipsByBlock={tipsByBlock} onSelection={setSelection} onOpenTip={openTip} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), structured: t("pdf.structured"), original: t("pdf.original"), structureHint: t("pdf.structureHint"), tableHeuristic: (confidence) => t("pdf.tableHeuristic", { confidence }), imageAlt: (page) => t("pdf.imageAlt", { page }), structureFailed: (error) => t("pdf.structureFailed", { error }), visualOnly: t("pdf.visualOnly"), exportAnnotations: t("pdf.exportAnnotations"), exportingAnnotations: t("pdf.exportingAnnotations"), runOcr: t("pdf.runOcr"), runningOcr: t("pdf.runningOcr"), ocrSource: (confidence) => t("pdf.ocrSource", { confidence }), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }), tipPreview: t("tip.fullPreview"), close: t("common.close"), openTip: (title) => t("tip.open", { title }) }} /> : <>
               <div className="blocks">
                 {documentItem.blocks.map((item) => <EditableBlock key={item.id} item={item} tips={tipsByBlock[item.id] || []} onChange={updateBlock} onSelection={setSelection} onOpenTip={openTip} />)}
               </div>

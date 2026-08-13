@@ -1373,6 +1373,37 @@ function demoAnswer(question: string, selected: string) {
   return `先抓住核心：**“${short}”**描述的是一种按相关性动态汇集信息的过程。\n\n可以把它想成一次带着问题的阅读：模型先确定当前要寻找什么，再给上下文中的候选信息打分，最后按分数加权组合。这样得到的表示不是简单复制某个词，而是融合了与当前问题最相关的上下文。\n\n针对你的问题“${question}”，建议继续区分两个层面：一是相关性分数如何计算，二是加权后的信息为什么能表达上下文。请在当前设备的设置中保存你自己的模型 API Key 后使用真实模型。`;
 }
 
+const maxAnswerContinuations = 3;
+
+async function continueLengthLimitedAnswer(client: OpenAI, model: string, messages: any[], initialContent: string, initialFinishReason: unknown, language: PromptLanguage) {
+  let content = initialContent;
+  let finishReason = String(initialFinishReason || "stop");
+  let segment = initialContent;
+  let continuations = 0;
+  const continuationMessages = [...messages];
+  while (finishReason === "length" && continuations < maxAnswerContinuations) {
+    continuationMessages.push(
+      { role: "assistant", content: segment },
+      { role: "user", content: language === "en"
+        ? "Continue exactly where the preceding answer was cut off. Do not repeat earlier text, do not restart, and finish the answer completely."
+        : "请严格从上一段回答被截断的位置继续，不要重复前文、不要重新开头，并把回答完整写完。" }
+    );
+    const completion = await client.chat.completions.create({ model, stream: false, messages: continuationMessages });
+    segment = String(completion.choices[0]?.message?.content || "");
+    if (!segment) throw new Error("模型回答因长度中断，续写请求没有返回内容");
+    content += segment;
+    finishReason = String(completion.choices[0]?.finish_reason || "stop");
+    continuations += 1;
+  }
+  const providerStillTruncated = finishReason === "length";
+  if (providerStillTruncated) {
+    content += language === "en"
+      ? "\n\n[Output notice: the model provider continued to stop at its output limit after three continuation attempts. The text above is all content returned by the provider.]"
+      : "\n\n【输出提示：模型提供方连续三次达到输出上限；以上已显示提供方实际返回的全部内容，但提供方仍未正常结束回答。】";
+  }
+  return { content, continuations, providerStillTruncated };
+}
+
 function serverFallbackApiKey() {
   return process.env.AI_TIP_DESKTOP === "1" ? "" : String(process.env.OPENAI_API_KEY || "");
 }
@@ -1583,30 +1614,22 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => {
       : `规则预检${apiKey ? "；模型评估未完成" : "（模型 API 未配置）"} · ${ruleAssessment.domain} · 规则评分 ${ruleAssessment.score}/100 · ${ruleAssessment.reasons.join("；")}`;
     const assessmentTrace: SkillTrace = {
       name: "professional_assessment",
-      label: assessmentError ? "专业程度模型评估失败" : professionalAssessment.professional ? "检测到专业问题" : professionalAssessment.level === "advanced" ? "检测到进阶问题" : "检测到一般问题",
+      label: assessmentError ? "专业程度模型评估未完成，已使用规则判断" : professionalAssessment.professional ? "检测到专业问题" : professionalAssessment.level === "advanced" ? "检测到进阶问题" : "检测到一般问题",
       detail: assessmentError ? `${assessmentSource}；错误：${assessmentError}` : assessmentSource,
-      status: assessmentError ? "error" : professionalAssessment.model || ruleAssessment.professional || ruleAssessment.requiresWebReview ? "success" : "warning"
+      status: assessmentError ? "warning" : professionalAssessment.model || ruleAssessment.professional || ruleAssessment.requiresWebReview ? "success" : "warning"
     };
     skillsUsed.push(assessmentTrace); send({ type: "skill", skill: assessmentTrace });
     const reviewSearchReady = effectiveSettings.webSearchEnabled && Boolean(effectiveSettings.searchApiKey);
-    if (assessmentError) {
-      answer = `专业程度评估失败，因此本次不会继续生成回答，也不会绕过评估进入普通回答路径。请检查模型接口兼容性后重试。错误：${assessmentError}`;
-      send({ type: "delta", delta: answer });
-      const blockedTrace: SkillTrace = { name: "professional_review", label: "回答已阻断", detail: "模型专业程度评估没有产生合法结构，未执行回答或联网搜索", status: "error" };
-      skillsUsed.push(blockedTrace); send({ type: "skill", skill: blockedTrace });
-    } else if (highRiskKind && (!apiKey || !reviewSearchReady)) {
-      answer = `这是${highRiskKind}高风险问题。当前没有同时可用的模型与联网证据源，因此我不会给出可能影响现实决策的个性化结论。请先在设置中配置模型 API 和联网搜索，再让具备资质的专业人士结合完整情况复核。`;
-      send({ type: "delta", delta: answer });
-      const blockedTrace: SkillTrace = { name: "web_search", label: "高风险回答已阻断", detail: !apiKey ? "模型 API 未配置" : "联网搜索未配置，无法取得可追溯证据", status: "error" };
-      skillsUsed.push(blockedTrace); send({ type: "skill", skill: blockedTrace });
-      const professionalBlockedTrace: SkillTrace = { name: "professional_review", label: "专业高风险回答已阻断", detail: "未满足模型与联网证据的双重前置条件", status: "error" };
-      skillsUsed.push(professionalBlockedTrace); send({ type: "skill", skill: professionalBlockedTrace });
-    } else if (reviewRequired && (!apiKey || !reviewSearchReady)) {
-      answer = "这是专业或政策敏感问题，但当前没有同时可用的模型与联网证据源。由于无法完成联网审查，本次回答已阻断。请先在设置中配置模型 API、启用联网搜索并填写搜索 API Key。";
-      send({ type: "delta", delta: answer });
-      const blockedTrace: SkillTrace = { name: "professional_review", label: "专业或政策回答已阻断", detail: !apiKey ? "模型 API 未配置，无法生成并审查专业回答" : "联网搜索未配置，无法执行强制证据审查", status: "error" };
-      skillsUsed.push(blockedTrace); send({ type: "skill", skill: blockedTrace });
-    } else if (client) {
+    if (reviewRequired && (!apiKey || !reviewSearchReady)) {
+      const reviewUnavailableTrace: SkillTrace = {
+        name: "professional_review",
+        label: "专业或政策联网审查未完成，回答仍将显示",
+        detail: !apiKey ? "模型 API 未配置；将显示本地一般性解释，并明确标记为未经模型与联网核验" : "联网搜索未配置；模型回答会保留，但不能标记为权威审查通过",
+        status: "warning"
+      };
+      skillsUsed.push(reviewUnavailableTrace); send({ type: "skill", skill: reviewUnavailableTrace });
+    }
+    if (client) {
       const context = contextFor(document, tip, db.tips);
       const prior = tip.messages.slice(0, -1).slice(-10).map((message) => ({ role: message.role, content: message.content }));
       const sharedMemory = tip.memoryEnabled === false ? "" : db.tips
@@ -1617,7 +1640,7 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => {
         .join("\n");
       let professionalEvidence = "";
       let professionalSearchCalls = 0;
-      if (reviewRequired) {
+      if (reviewRequired && reviewSearchReady) {
         const sourcePriority = professionalAssessment.domain.includes("政策")
           ? "优先政府、立法机关、监管机构、国际组织的正式文件及权威研究机构原文"
           : "优先官方文档、标准组织、政府/高校或同行评审来源";
@@ -1668,7 +1691,13 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => {
             if (!calls.length) {
               const content = String(message?.content || "");
               if (!content) throw new Error("模型没有返回回答");
-              for (const chunk of content.match(/.{1,24}/gs) || []) { answer += chunk; if (!bufferedReview) send({ type: "delta", delta: chunk }); }
+              const completed = await continueLengthLimitedAnswer(client, selectedModel, baseMessages, content, completion.choices[0]?.finish_reason, promptLanguage);
+              answer = completed.content;
+              for (const chunk of answer.match(/.{1,24}/gs) || []) if (!bufferedReview) send({ type: "delta", delta: chunk });
+              if (completed.continuations > 0) {
+                const trace: SkillTrace = { name: "output_continuation", label: completed.providerStillTruncated ? "模型输出仍达到上限" : "已自动续写完整回答", detail: completed.providerStillTruncated ? `已执行 ${completed.continuations} 次续写，提供方仍返回 length` : `检测到 finish_reason=length，已执行 ${completed.continuations} 次续写并合并完整内容`, status: completed.providerStillTruncated ? "warning" : "success" };
+                skillsUsed.push(trace); send({ type: "skill", skill: trace });
+              }
               finalProduced = true;
               break;
             }
@@ -1707,21 +1736,37 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => {
         const crossChecked = skillsUsed.some((skill) => skill.name === "cross_check" && skill.status === "success");
         const originalsRead = skillsUsed.some((skill) => skill.name === "web_fetch" && skill.status === "success");
         if (!crossChecked || !originalsRead) {
-          answer = `这是${highRiskKind}高风险问题，但本次检索没有取得至少两个独立来源及两篇可读原文，因此我不会给出个性化结论。请让具备资质的专业人士基于完整资料进行判断。`;
-          const trace: SkillTrace = { name: "human_review", label: "证据不足，回答已阻断", detail: "未达到高风险问题的最低交叉验证门槛", status: "error" };
+          answer += `\n\n审查提示：本次检索没有取得至少两个独立来源及两篇可读原文。以上回答仍予以保留，但不能视为已经完成高风险专业核验，也不应直接用于个性化现实决策。`;
+          const trace: SkillTrace = { name: "human_review", label: "证据不足，回答已保留并标记风险", detail: "未达到高风险问题的最低交叉验证门槛；未删除已生成回答", status: "warning" };
           skillsUsed.push(trace); send({ type: "skill", skill: trace });
         }
       }
       if (!finalProduced) {
         if (bufferedReview) {
           const completion = await client.chat.completions.create({ model: selectedModel, stream: false, messages: baseMessages });
-          answer = String(completion.choices[0]?.message?.content || "");
-          if (!answer) throw new Error("模型没有返回可审查的回答");
+          const initialAnswer = String(completion.choices[0]?.message?.content || "");
+          if (!initialAnswer) throw new Error("模型没有返回可审查的回答");
+          const completed = await continueLengthLimitedAnswer(client, selectedModel, baseMessages, initialAnswer, completion.choices[0]?.finish_reason, promptLanguage);
+          answer = completed.content;
+          if (completed.continuations > 0) {
+            const trace: SkillTrace = { name: "output_continuation", label: completed.providerStillTruncated ? "模型输出仍达到上限" : "已自动续写完整回答", detail: completed.providerStillTruncated ? `已执行 ${completed.continuations} 次续写，提供方仍返回 length` : `检测到 finish_reason=length，已执行 ${completed.continuations} 次续写并合并完整内容`, status: completed.providerStillTruncated ? "warning" : "success" };
+            skillsUsed.push(trace); send({ type: "skill", skill: trace });
+          }
         } else {
+          let finishReason = "stop";
           const stream = await client.chat.completions.create({ model: selectedModel, stream: true, messages: baseMessages });
           for await (const event of stream) {
             const delta = event.choices[0]?.delta?.content || "";
             if (delta) { answer += delta; send({ type: "delta", delta }); }
+            if (event.choices[0]?.finish_reason) finishReason = event.choices[0].finish_reason;
+          }
+          if (finishReason === "length") {
+            const streamedLength = answer.length;
+            const completed = await continueLengthLimitedAnswer(client, selectedModel, baseMessages, answer, finishReason, promptLanguage);
+            answer = completed.content;
+            for (const chunk of answer.slice(streamedLength).match(/.{1,24}/gs) || []) send({ type: "delta", delta: chunk });
+            const trace: SkillTrace = { name: "output_continuation", label: completed.providerStillTruncated ? "模型输出仍达到上限" : "已自动续写完整回答", detail: completed.providerStillTruncated ? `已执行 ${completed.continuations} 次续写，提供方仍返回 length` : `检测到 finish_reason=length，已执行 ${completed.continuations} 次续写并合并完整内容`, status: completed.providerStillTruncated ? "warning" : "success" };
+            skillsUsed.push(trace); send({ type: "skill", skill: trace });
           }
         }
       }
@@ -1733,20 +1778,24 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => {
           const citedIds = Array.from(answer.matchAll(/\[S(\d+)\]/g), (match) => Number(match[1]));
           const invalidIds = citedIds.filter((id) => id < 1 || id > sourceCount);
           const citationStructureOk = citedIds.length > 0 && invalidIds.length === 0;
-          const audit = await client.chat.completions.create({
-            model: selectedModel,
-            stream: false,
-            messages: [
-              { role: "system", content: "你是严格的引用审计器。判断回答中的外部事实是否被给定证据直接支持，是否遗漏来源冲突或时间范围。只输出一行：SUPPORTED: 简短理由；或 UNSUPPORTED: 简短指出未被证据支持的主张。不要补充新事实。" },
-              { role: "user", content: `待审计回答：\n${answer.slice(0, 12_000)}\n\n工具证据：\n${evidenceLog.join("\n\n").slice(0, 30_000)}` }
-            ]
-          });
-          const auditText = String(audit.choices[0]?.message?.content || "无法完成审计").trim().slice(0, 500);
-          const supported = citationStructureOk && /^SUPPORTED\s*:/i.test(auditText);
+          const answerChunks = answer.match(/[\s\S]{1,12_000}/g) || [answer];
+          const auditTexts: string[] = [];
+          for (let index = 0; index < answerChunks.length; index++) {
+            const audit = await client.chat.completions.create({
+              model: selectedModel,
+              stream: false,
+              messages: [
+                { role: "system", content: "你是严格的引用审计器。判断回答中的外部事实是否被给定证据直接支持，是否遗漏来源冲突或时间范围。只输出一行：SUPPORTED: 简短理由；或 UNSUPPORTED: 简短指出未被证据支持的主张。不要补充新事实。" },
+                { role: "user", content: `待审计回答（第 ${index + 1}/${answerChunks.length} 段）：\n${answerChunks[index]}\n\n工具证据：\n${evidenceLog.join("\n\n").slice(0, 30_000)}` }
+              ]
+            });
+            auditTexts.push(String(audit.choices[0]?.message?.content || "无法完成审计").trim().slice(0, 500));
+          }
+          const supported = citationStructureOk && auditTexts.every((text) => /^SUPPORTED\s*:/i.test(text));
           citationReviewSupported = supported;
           const structuralDetail = !citedIds.length ? "回答没有 [S#] 来源标注" : invalidIds.length ? `存在无效来源编号：${invalidIds.join("、")}` : `${new Set(citedIds).size} 个有效来源编号`;
-          citationReviewDetail = `${structuralDetail}；${auditText}`;
-          const trace: SkillTrace = { name: "citation_audit", label: supported ? "引用结构与证据审计通过" : "引用审计发现风险", detail: `${structuralDetail}；${auditText}`, status: supported ? "success" : "warning" };
+          citationReviewDetail = `${structuralDetail}；${auditTexts.map((text, index) => answerChunks.length > 1 ? `第${index + 1}段：${text}` : text).join("；")}`;
+          const trace: SkillTrace = { name: "citation_audit", label: supported ? "引用结构与证据审计通过" : "引用审计发现风险", detail: citationReviewDetail, status: supported ? "success" : "warning" };
           skillsUsed.push(trace); send({ type: "skill", skill: trace });
         } catch (error) {
           citationReviewDetail = error instanceof Error ? error.message.slice(0, 180) : "审计模型调用失败";
@@ -1761,10 +1810,10 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => {
           name: "professional_review",
           label: reviewPassed ? "专业或政策回答联网审查通过" : "专业或政策回答联网审查未通过",
           detail: `${authorityOk ? "已取得明确权威来源" : "未取得明确权威来源"}；${citationReviewDetail}`,
-          status: reviewPassed ? "success" : "error"
+          status: reviewPassed ? "success" : "warning"
         };
         skillsUsed.push(reviewTrace); send({ type: "skill", skill: reviewTrace });
-        if (!reviewPassed) answer = `这个专业或政策问题的联网审查未通过，因此我不会展示未经证据支持的原回答，也不会给出个性化结论。审查结果：${reviewTrace.detail}`;
+        if (!reviewPassed) answer += `\n\n---\n审查警告：本回答的专业或政策联网审查未通过。原回答已完整保留，便于你阅读和核对，但请勿把未被证据支持的主张当作已证实事实，也不要据此直接作出高风险个性化决策。审查结果：${reviewTrace.detail}`;
       }
       if (bufferedReview) for (const chunk of answer.match(/.{1,24}/gs) || []) send({ type: "delta", delta: chunk });
     } else {

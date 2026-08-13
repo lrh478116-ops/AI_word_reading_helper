@@ -281,6 +281,7 @@ async function createWindow() {
       let pdfCanvasDataUrl = '';
       let pdfSecondCanvasDataUrl = '';
       if (pdfFixtureBase64) {
+        window.__desktopSmokeStep = 'PDF Tip layout stability';
         const binary = atob(pdfFixtureBase64); const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
         const file = new File([bytes], '中文图片资料.pdf', { type: 'application/pdf' });
@@ -379,7 +380,11 @@ async function createWindow() {
           const maximumRootScroll = tipOpenSamples.reduce((result, sample) => Math.max(result, Math.abs(sample.windowScroll), Math.abs(sample.documentScroll), Math.abs(sample.bodyScroll)), 0);
           if (maximumRootScroll > 1) throw new Error('opening a PDF Tip with history scrolled the application root by ' + maximumRootScroll + 'px');
           pdfTipOpenLayoutMaxDelta = tipOpenSamples.reduce((result, sample) => Math.max(result, Math.abs(sample.anchorTop - initialTipOpenLayout.anchorTop), Math.abs(sample.navTop - initialTipOpenLayout.navTop), Math.abs(sample.navBottom - initialTipOpenLayout.navBottom), Math.abs(sample.topbarTop - initialTipOpenLayout.topbarTop)), 0);
-          if (pdfTipOpenLayoutMaxDelta > 2) throw new Error('opening an existing PDF Tip moved the reading anchor or app columns by ' + pdfTipOpenLayoutMaxDelta + 'px');
+          if (pdfTipOpenLayoutMaxDelta > 2) {
+            const layoutDeltas = tipOpenSamples.map(sample => ({ anchorTop: sample.anchorTop - initialTipOpenLayout.anchorTop, navTop: sample.navTop - initialTipOpenLayout.navTop, navBottom: sample.navBottom - initialTipOpenLayout.navBottom, topbarTop: sample.topbarTop - initialTipOpenLayout.topbarTop, scrollTop: sample.scrollTop - initialTipOpenLayout.scrollTop }));
+            const distinctDeltas = layoutDeltas.filter((sample, index) => index === 0 || JSON.stringify(sample) !== JSON.stringify(layoutDeltas[index - 1]));
+            throw new Error('opening an existing PDF Tip moved the reading anchor or app columns by ' + pdfTipOpenLayoutMaxDelta + 'px: ' + JSON.stringify({ initialTipOpenLayout, distinctDeltas }));
+          }
           const scannedPages = [...document.querySelectorAll('[data-pdf-page]')];
           if (scannedPages.length !== 4) throw new Error('OCR layout regression requires a four-page scanned PDF');
           const layoutPage = scannedPages[2];
@@ -428,6 +433,7 @@ async function createWindow() {
         const element = document.querySelector('[data-tip-panel="' + rootId + '"] .message.assistant .message-content');
         return element?.textContent?.length > 8 ? element : null;
       }, '根 Tip 回答');
+      const rootAnswerText = rootMessage.textContent;
       selectText(rootMessage, 0, 4);
       (await waitFor('.selection-toolbar button')).click();
       const childPanel = await waitUntil(() => [...document.querySelectorAll('[data-tip-panel]')].find(element => element.getAttribute('data-tip-panel') !== rootId), '子 Tip 面板');
@@ -464,8 +470,28 @@ async function createWindow() {
       await waitUntil(() => document.querySelector('.tip-panel-context')?.getAttribute('data-tip-panel') === rootId && document.querySelector('[data-tip-panel="' + childId + '"]:not(.tip-panel-context)'), '收回孙 Tip 恢复父子布局');
       document.querySelector('[data-tip-panel="' + childId + '"]:not(.tip-panel-context) .tip-head .icon-button').click();
       await waitUntil(() => document.querySelector('.document-page') && document.querySelector('[data-tip-panel="' + rootId + '"]') && !document.querySelector('.tip-panel-context'), '收回子 Tip 恢复文档与根 Tip');
+      const rootFollowupComposer = document.querySelector('[data-tip-panel="' + rootId + '"] .tip-composer textarea');
+      setTextArea(rootFollowupComposer, '这是第二轮追问，悬浮预览仍应显示第一轮回答。');
+      document.querySelector('[data-tip-panel="' + rootId + '"] .send-button').click();
+      const rootSecondMessage = await waitUntil(() => {
+        const elements = [...document.querySelectorAll('[data-tip-panel="' + rootId + '"] .message.assistant .message-content')];
+        const element = elements.at(-1);
+        return elements.length >= 2 && element?.textContent?.includes('这是第二轮追问') ? element : null;
+      }, '根 Tip 第二轮回答');
+      const rootSecondAnswerText = rootSecondMessage.textContent;
+      if (rootSecondAnswerText === rootAnswerText) throw new Error('反事实前提失败：根 Tip 的第一轮和第二轮回答内容相同');
       document.querySelector('[data-tip-panel="' + rootId + '"] .tip-head .icon-button').click();
       await waitUntil(() => document.querySelector('.document-page') && !document.querySelector('[data-tip-panel]'), '收回根 Tip 恢复文档');
+      window.__desktopSmokeStep = 'full Tip answer preview';
+      const rootMarker = await waitUntil(() => [...document.querySelectorAll('[data-tip-marker-id]')].find(element => element.getAttribute('data-tip-marker-id') === rootId), 'root Tip marker');
+      if (rootMarker.hasAttribute('title')) throw new Error('Tip marker 仍使用可能截断的原生 summary title');
+      rootMarker.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      const fullPreview = await waitFor('[data-tip-answer-preview="' + rootId + '"] .tip-answer-preview-body');
+      if (fullPreview.textContent !== rootAnswerText || fullPreview.textContent === rootSecondAnswerText || !fullPreview.textContent.includes('请在当前设备的设置中保存你自己的模型 API Key后使用真实模型。'.replace('Key后', 'Key 后'))) throw new Error('Tip 悬浮预览没有完整显示第一条回答：' + JSON.stringify({ expectedFirstLength: rootAnswerText.length, secondLength: rootSecondAnswerText.length, actualLength: fullPreview.textContent.length, tail: fullPreview.textContent.slice(-80) }));
+      rootMarker.click();
+      await waitUntil(() => document.querySelector('[data-tip-panel="' + rootId + '"]'), 'full preview marker still opens Tip');
+      document.querySelector('[data-tip-panel="' + rootId + '"] .tip-head .icon-button').click();
+      await waitUntil(() => !document.querySelector('[data-tip-panel]'), 'close Tip after full preview');
       const nestedDocuments = await fetch('/api/documents', { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
       const nestedDocument = await fetch('/api/documents/' + nestedDocuments.documents[0].id, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
       if (!nestedDocument.tips.some(tip => tip.id === childId && tip.parentTipId === rootId && tip.title === childName) || !nestedDocument.tips.some(tip => tip.id === grandId && tip.parentTipId === childId && tip.depth === 3)) throw new Error('树改名或递归 lineage 没有持久化：' + JSON.stringify({ rootId, childId, grandId, tips: nestedDocument.tips.map(tip => ({ id: tip.id, parentTipId: tip.parentTipId, title: tip.title, depth: tip.depth })) }));
@@ -474,7 +500,7 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, emptyImportDefault: true, globalDropImport: true, unsupportedDropBlocked: true, saveFailureBlocked: true, saveBeforeDropUpload: true, backSaveFailureBlocked: true, saveBeforeBack: true, wordTableDirectEdit: true, wordTableSaveRoundTrip: true, addBlockControlsPreserved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, emptyImportDefault: true, globalDropImport: true, unsupportedDropBlocked: true, saveFailureBlocked: true, saveBeforeDropUpload: true, backSaveFailureBlocked: true, saveBeforeBack: true, wordTableDirectEdit: true, wordTableSaveRoundTrip: true, addBlockControlsPreserved: true, firstTipAnswerPreview: true, previewMarkerOpen: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
     })()`); }
     catch (error) {
       const diagnostic = await mainWindow.webContents.executeJavaScript("({ step: window.__desktopSmokeStep || 'unknown', text: document.body.innerText.slice(-700), importError: document.querySelector('[data-import-error]')?.textContent || '', editor: document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') || '' })").catch(() => ({}));

@@ -118,7 +118,7 @@ export interface TipMessage {
 }
 
 export interface SkillTrace {
-  name: "professional_assessment" | "professional_review" | "authority_check" | "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review";
+  name: "professional_assessment" | "professional_review" | "authority_check" | "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review" | "output_continuation";
   label: string;
   detail: string;
   sources?: Array<{ title: string; url: string }>;

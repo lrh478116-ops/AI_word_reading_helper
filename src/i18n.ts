@@ -59,7 +59,7 @@ const zh: Record<string, string> = {
   "tip.welcome": "当前 Tip 保持独立聊天；开启记忆时可参考本文其他 Tip 的摘要。", "tip.simple": "通俗解释", "tip.detailed": "详细解释", "tip.professional": "专业解释", "tip.example": "举个例子",
   "tip.followup": "继续追问…", "tip.sendHint": "Enter 发送 · Shift + Enter 换行", "tip.stop": "停止", "tip.resolved": "重新打开", "tip.resolve": "标记已解决", "tip.deleteConfirm": "删除这个 Tip、全部对话及其所有子 Tip？", "tip.sourceMessageMissing": "来源聊天消息已失效，请重新选择",
   "tip.treeButton": "Tip 树", "tip.treeKicker": "对话定位", "tip.treeTitle": "Tip 树状图", "tip.treeHint": "点击节点定位对话；直接修改名称并按 Enter 或移开焦点即可保存。", "tip.treeDocument": "原文档", "tip.treeLocate": "定位到这个对话", "tip.treeName": "对话名称",
-  "tip.open": "打开 Tip：{title}", "tip.collapse": "折叠 Tip", "tip.checkingTools": "正在核对工具结果…", "app.entering": "正在进入 AI Tip…"
+  "tip.open": "打开 Tip：{title}", "tip.fullPreview": "首次回答预览", "tip.collapse": "折叠 Tip", "tip.checkingTools": "正在核对工具结果…", "app.entering": "正在进入 AI Tip…"
 };
 
 const en: Record<string, string> = {
@@ -117,7 +117,7 @@ const en: Record<string, string> = {
   "tip.welcome": "This Tip has its own chat. Enable memory to reference summaries from other Tips in this document.", "tip.simple": "Simple explanation", "tip.detailed": "Detailed explanation", "tip.professional": "Expert explanation", "tip.example": "Give an example",
   "tip.followup": "Ask a follow-up…", "tip.sendHint": "Enter to send · Shift + Enter for a new line", "tip.stop": "Stop", "tip.resolved": "Reopen", "tip.resolve": "Mark resolved", "tip.deleteConfirm": "Delete this Tip, its chat, and every child Tip?", "tip.sourceMessageMissing": "The source chat message is no longer available. Select it again.",
   "tip.treeButton": "Tip tree", "tip.treeKicker": "Conversation map", "tip.treeTitle": "Tip tree", "tip.treeHint": "Select a node to navigate. Edit its name and press Enter or move focus to save.", "tip.treeDocument": "Source document", "tip.treeLocate": "Go to this conversation", "tip.treeName": "Conversation name",
-  "tip.open": "Open Tip: {title}", "tip.collapse": "Collapse Tip", "tip.checkingTools": "Checking tool results…", "app.entering": "Opening AI Tip…"
+  "tip.open": "Open Tip: {title}", "tip.fullPreview": "First answer preview", "tip.collapse": "Collapse Tip", "tip.checkingTools": "Checking tool results…", "app.entering": "Opening AI Tip…"
 };
 
 const dictionaries: Record<Language, Record<string, string>> = { "zh-CN": zh, en };
