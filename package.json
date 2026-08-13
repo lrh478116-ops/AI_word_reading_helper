@@ -1,7 +1,7 @@
 {
   "name": "ai-tip-document-app",
   "private": true,
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "面向深度阅读的本地 AI 文档与 Tip 对话应用",
   "author": "AI Tip",
   "type": "module",
@@ -17,14 +17,19 @@
     "desktop:dev": "pnpm desktop:prepare && concurrently -k -n web,desktop -c cyan,green \"vite\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs --dev\"",
     "desktop:start": "pnpm desktop:prepare && electron electron/main.mjs",
     "desktop:smoke": "pnpm desktop:prepare && electron electron/main.mjs --smoke-test",
-    "skills:test": "pnpm desktop:prepare && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-skills-integration.mjs",
+    "skills:test": "pnpm desktop:prepare && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-pdf-tip-anchors.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-skills-integration.mjs",
     "desktop:dist:win": "pnpm desktop:prepare && electron-builder --win nsis --x64",
     "desktop:dist:mas": "pnpm desktop:prepare && electron-builder --mac mas --universal",
     "desktop:dist:mas-dev": "pnpm desktop:prepare && electron-builder --mac mas-dev --universal"
   },
   "dependencies": {
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "5.5.207",
-    "pyodide": "314.0.3"
+    "pyodide": "314.0.3",
+    "tesseract.js": "7.0.0",
+    "tesseract.js-core": "7.0.0"
   },
   "devDependencies": {
     "@types/express": "5.0.6",
@@ -58,7 +63,11 @@
     "productName": "AI Tip",
     "asar": true,
     "asarUnpack": [
-      "node_modules/pyodide/**/*"
+      "node_modules/pyodide/**/*",
+      "node_modules/tesseract.js/dist/**/*",
+      "node_modules/tesseract.js-core/**/*",
+      "node_modules/@tesseract.js-data/chi_sim/4.0.0_best_int/**/*",
+      "node_modules/@tesseract.js-data/eng/4.0.0_best_int/**/*"
     ],
     "directories": {
       "output": "release"
@@ -67,6 +76,7 @@
       "dist/**/*",
       "dist-electron/**/*",
       "electron/**/*",
+      "scripts/fixtures/*.base64",
       "package.json"
     ],
     "win": {
@@ -105,5 +115,10 @@
       "entitlements": "build/entitlements.mas.plist",
       "entitlementsInherit": "build/entitlements.mas.inherit.plist"
     }
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "tesseract.js"
+    ]
   }
 }

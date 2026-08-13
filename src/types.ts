@@ -15,6 +15,51 @@ export interface PdfTableData {
   headerRows: number;
 }
 
+export interface PdfPageTextItem {
+  index: number;
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  bbox: [number, number, number, number];
+}
+
+export interface PdfPageSource {
+  pageNumber: number;
+  width: number;
+  height: number;
+  viewBox: [number, number, number, number];
+  rotation: number;
+  text: string;
+  items: PdfPageTextItem[];
+  source: "native" | "ocr" | "none";
+  confidence: number;
+  ocr?: {
+    engine: "tesseract.js";
+    version: string;
+    languages: string[];
+    recognizedAt: string;
+  };
+}
+
+export interface PdfNormalizedRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PdfTipAnchor {
+  version: number;
+  pdfFingerprint: string;
+  pageNumber: number;
+  source: "native" | "ocr";
+  textStart: number;
+  textEnd: number;
+  rects: PdfNormalizedRect[];
+  rotation: number;
+  confidence: number;
+}
+
 export interface DocumentBlock {
   id: string;
   documentId: string;
@@ -48,6 +93,8 @@ export interface DocumentItem {
     pageCount: number;
     extractedAt: string;
     error?: string;
+    fingerprint: string;
+    pages: PdfPageSource[];
   };
 }
 
@@ -74,9 +121,10 @@ export interface TipThread {
   userId: string;
   documentId: string;
   blockId: string;
-  anchorType: "document" | "message";
+  anchorType: "document" | "message" | "pdf";
   parentTipId?: string;
   anchorMessageId?: string;
+  pdfAnchor?: PdfTipAnchor;
   depth: number;
   selectedText: string;
   startOffset: number;
@@ -138,6 +186,15 @@ export interface SelectionInfo {
   text: string;
   startOffset: number;
   endOffset: number;
+  rect: { left: number; top: number; width: number; height: number };
+}
+
+export interface PdfSelectionInfo {
+  source: "pdf";
+  text: string;
+  prefixText: string;
+  suffixText: string;
+  pdfAnchor: PdfTipAnchor;
   rect: { left: number; top: number; width: number; height: number };
 }
 

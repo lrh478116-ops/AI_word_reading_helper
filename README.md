@@ -93,8 +93,11 @@ AI_TIP_FEEDBACK_RELAY_TOKEN=your-relay-token
 
 - 注册、登录、JWT 鉴权和用户数据隔离
 - 新建、搜索、排序、收藏、回收站、恢复和永久删除
-- TXT、Markdown、DOCX、PDF 导入，10MB 大小限制并保留原始文件；中文、重音字符和 Emoji 文件名在 multipart 边界恢复为 UTF-8
+- TXT、Markdown、DOCX、PDF 导入不再设置固定 10MB 上限；上传先写入本机临时文件，解析结束后确定性清理，并保留原始文件；中文、重音字符和 Emoji 文件名在 multipart 边界恢复为 UTF-8
 - PDF 原始版式由 PDF.js Canvas + TextLayer 从鉴权读取的原始字节渲染；原文件逐字节保留，不经过 OCR 或 JPEG/WebP 二次编码
+- 原始 PDF 页面可直接选择文字创建 Tip；锚点同时保存原文件 SHA-256、页码、权威文字偏移、前后文、页内归一化多矩形、旋转角度、来源和置信度，缩放与高 DPI 下由当前 viewport 重算覆盖位置
+- 扫描 PDF 可按页使用安装包内置的 Tesseract.js、简体中文与英文数据离线 OCR；识别文字、坐标、引擎版本和页级置信度持久化后才能创建 `source=ocr` 的 PDF Tip，不访问 CDN
+- PDF Tip 可导出为不覆盖原文件的 `原名-AI-Tip-annotations.pdf`，副本含标准 Highlight/Text Annotation 与可追踪 Tip ID，完整聊天仍只保存在应用数据库
 - PDF 结构化视图把可映射文字、满足严格几何条件的表格和原生图片绘制操作分别持久化为真实文本、`<table>` 与 `<img>`；表格显示推断置信度，扫描件不虚构文字
 - 统一块模型：标题、段落、列表、引用、代码、PDF 表格和 PDF 图片
 - 块级 `contentEditable` 编辑、900ms 防抖自动保存、手动保存和状态反馈
@@ -128,6 +131,7 @@ src/
 server/
   index.ts       Express API、持久化、导入解析、锚点恢复与 AI
   pdf-structure.ts PDF 文本行、几何表格和图片绘制操作提取
+  pdf-tip.ts     PDF 页锚点权威验证与批注副本生成
 ```
 
 ## 验证命令

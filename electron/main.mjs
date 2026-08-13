@@ -21,6 +21,7 @@ async function bootServer() {
   if (process.argv.includes("--smoke-test")) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), "ai-tip-desktop-smoke-"));
   process.env.AI_TIP_DATA_DIR = smokeDataDir || path.join(app.getPath("userData"), "data");
   process.env.AI_TIP_DIST_DIR = path.join(appRoot, "dist");
+  process.env.AI_TIP_APP_ROOT = appRoot;
   const serverModule = await import(new URL("../dist-electron/server.cjs", import.meta.url));
   const startServer = serverModule.startServer || serverModule.default?.startServer;
   const configureSecretProtection = serverModule.configureSecretProtection || serverModule.default?.configureSecretProtection;
@@ -84,8 +85,12 @@ async function createWindow() {
     const externalPdfFixturePath = process.env.AI_TIP_PDF_FIXTURE_PATH ? path.resolve(process.env.AI_TIP_PDF_FIXTURE_PATH) : "";
     const pdfFixturePath = externalPdfFixturePath || path.join(appRoot, "scripts", "fixtures", "semantic-pdf.pdf.base64");
     const pdfFixtureBase64 = existsSync(pdfFixturePath) ? readFileSync(pdfFixturePath, "utf8").replace(/\s+/g, "") : "";
+    const ocrPdfFixturePath = path.join(appRoot, "scripts", "fixtures", "scanned-pdf.pdf.base64");
+    const ocrPdfFixtureBase64 = existsSync(ocrPdfFixturePath) ? readFileSync(ocrPdfFixturePath, "utf8").replace(/\s+/g, "") : "";
+    if (!pdfFixtureBase64 || !ocrPdfFixtureBase64) throw new Error("桌面验收所需的 PDF 测试文件缺失");
     const productBehavior = await mainWindow.webContents.executeJavaScript(`(async () => {
       const pdfFixtureBase64 = ${JSON.stringify(pdfFixtureBase64)};
+      const ocrPdfFixtureBase64 = ${JSON.stringify(ocrPdfFixtureBase64)};
       const capturePdfCanvas = ${JSON.stringify(Boolean(process.env.AI_TIP_PDF_SCREENSHOT_PATH))};
       const waitFor = async (selector, timeout = 5000) => {
         const started = Date.now();
@@ -173,12 +178,31 @@ async function createWindow() {
         fileInput.files = transfer.files;
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
         await waitFor('[data-pdf-document]');
+        const originalPages = await waitUntil(() => document.querySelectorAll('[data-pdf-page]').length === 2 ? [...document.querySelectorAll('[data-pdf-page]')] : null, 'PDF original pages');
+        await waitUntil(() => originalPages[0].classList.contains('rendered') && originalPages[0].querySelectorAll('.pdf-text-layer span').length >= 5, 'PDF original TextLayer');
+        const originalSelectionSpan = await waitUntil(() => [...originalPages[0].querySelectorAll('.pdf-text-layer span')].find(element => element.textContent?.includes('可选择')), 'selectable PDF source text');
+        const originalSelectionStart = originalSelectionSpan.textContent.indexOf('可选择');
+        selectText(originalSelectionSpan, originalSelectionStart, '可选择'.length);
+        (await waitFor('.selection-toolbar button')).click();
+        const pdfTipPanel = await waitFor('[data-tip-panel]');
+        const pdfTipId = pdfTipPanel.getAttribute('data-tip-panel');
+        const pdfDocumentId = document.querySelector('[data-pdf-document]').getAttribute('data-pdf-document');
+        const persistedPdf = await fetch('/api/documents/' + pdfDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+        const persistedPdfTip = persistedPdf.tips.find(tip => tip.id === pdfTipId);
+        if (persistedPdfTip?.anchorType !== 'pdf' || persistedPdfTip?.pdfAnchor?.pdfFingerprint !== persistedPdf.document.pdfStructure?.fingerprint || persistedPdfTip?.selectedText !== '可选择') throw new Error('PDF TextLayer selection did not create a fingerprint-bound PDF Tip through the formal path');
+        pdfTipPanel.querySelector('.tip-head .icon-button').click();
+        await waitUntil(() => !document.querySelector('[data-tip-panel]') && document.querySelector('.pdf-page-tip'), 'PDF Tip overlay after collapse');
+        document.querySelector('.pdf-page-tip').click();
+        await waitUntil(() => document.querySelector('[data-tip-panel="' + pdfTipId + '"]'), 'reopen PDF Tip from overlay');
+        document.querySelector('[data-tip-panel="' + pdfTipId + '"] .tip-head .icon-button').click();
+        await waitUntil(() => !document.querySelector('[data-tip-panel]'), 'restore PDF page after Tip collapse');
         if (document.querySelector('.document-title')?.value !== '中文图片资料') throw new Error('Electron 文件输入没有保留中文 PDF 标题');
+        document.querySelector('.pdf-view-switch button:first-child').click();
         const semanticText = await waitFor('[data-pdf-semantic-block] p');
         const semanticTable = await waitFor('[data-pdf-table-block]');
         const semanticImage = await waitUntil(() => document.querySelector('[data-pdf-image-block]')?.naturalWidth > 100 ? document.querySelector('[data-pdf-image-block]') : null, 'PDF 独立图片对象');
         if (!semanticText.textContent.includes('可选择') || semanticTable.querySelectorAll('tr').length !== 3 || semanticImage.tagName !== 'IMG') throw new Error('PDF 结构化视图没有分别保留文本、表格和图片');
-        document.querySelector('.pdf-view-switch button:last-child').click();
+        document.querySelector('.pdf-view-switch button:nth-child(2)').click();
         const pages = await waitUntil(() => document.querySelectorAll('[data-pdf-page]').length === 2 ? [...document.querySelectorAll('[data-pdf-page]')] : null, 'PDF 两页结构');
         const firstCanvas = await waitUntil(() => pages[0].classList.contains('rendered') && pages[0].querySelector('canvas')?.width > 500 ? pages[0].querySelector('canvas') : null, 'PDF 第一页 Canvas');
         if (pages[0].querySelectorAll('.pdf-text-layer span').length < 5) throw new Error('PDF 原始版式没有叠加真实可选择 TextLayer');
@@ -196,6 +220,33 @@ async function createWindow() {
         pdfVisual = true;
         document.querySelector('.back-button').click();
         await waitFor('.app-nav');
+        if (ocrPdfFixtureBase64) {
+          const ocrBinary = atob(ocrPdfFixtureBase64); const ocrBytes = new Uint8Array(ocrBinary.length);
+          for (let index = 0; index < ocrBinary.length; index++) ocrBytes[index] = ocrBinary.charCodeAt(index);
+          const ocrFile = new File([ocrBytes], 'scanned-ocr-test.pdf', { type: 'application/pdf' });
+          const ocrTransfer = new DataTransfer(); ocrTransfer.items.add(ocrFile);
+          const ocrInput = document.querySelector('input[type="file"]'); ocrInput.files = ocrTransfer.files;
+          ocrInput.dispatchEvent(new Event('change', { bubbles: true }));
+          const ocrDocument = await waitFor('[data-pdf-document]');
+          const ocrDocumentId = ocrDocument.getAttribute('data-pdf-document');
+          const ocrPage = await waitFor('[data-pdf-page="1"]');
+          await waitUntil(() => ocrPage.classList.contains('rendered'), 'scanned PDF canvas');
+          const ocrButton = await waitFor('.pdf-page-shell > header button');
+          ocrButton.click();
+          await waitUntil(() => ocrPage.querySelectorAll('.pdf-ocr-word').length >= 3 && ocrPage.querySelector('header small'), 'offline OCR word layer', 120000);
+          const ocrWord = await waitUntil(() => [...ocrPage.querySelectorAll('.pdf-ocr-word')].find(element => /OCR/i.test(element.textContent || '')), 'OCR selectable word');
+          selectText(ocrWord, 0, Math.min(3, ocrWord.textContent.trim().length));
+          (await waitFor('.selection-toolbar button')).click();
+          const ocrTipPanel = await waitFor('[data-tip-panel]');
+          const ocrTipId = ocrTipPanel.getAttribute('data-tip-panel');
+          const persistedOcr = await fetch('/api/documents/' + ocrDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+          const persistedOcrTip = persistedOcr.tips.find(tip => tip.id === ocrTipId);
+          if (persistedOcr.document.pdfStructure?.pages?.[0]?.source !== 'ocr' || persistedOcrTip?.anchorType !== 'pdf' || persistedOcrTip?.pdfAnchor?.source !== 'ocr' || !(persistedOcrTip?.pdfAnchor?.confidence > 0)) throw new Error('offline OCR output did not become a persisted PDF Tip authority');
+          ocrTipPanel.querySelector('.tip-head .icon-button').click();
+          await waitUntil(() => !document.querySelector('[data-tip-panel]') && document.querySelector('.pdf-page-tip'), 'OCR Tip overlay');
+          document.querySelector('.back-button').click();
+          await waitFor('.app-nav');
+        }
       }
       document.querySelector('.header-actions .primary').click();
       const editableBlock = await waitFor('[contenteditable][data-block-id]');
@@ -259,7 +310,7 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, offlineOcr: true, ocrTipAuthority: true, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
     })()`);
     if (process.env.AI_TIP_PDF_SCREENSHOT_PATH && productBehavior.pdfCanvasDataUrl) {
       const png = String(productBehavior.pdfCanvasDataUrl).replace(/^data:image\/png;base64,/, "");

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { DocumentBlock, PdfBlockSource } from "../src/types.js";
+import type { DocumentBlock, PdfBlockSource, PdfPageSource } from "../src/types.js";
 
-export const PDF_STRUCTURE_VERSION = 1;
+export const PDF_STRUCTURE_VERSION = 2;
 
 type Matrix = [number, number, number, number, number, number];
 type TextItem = { index: number; str: string; x: number; y: number; width: number; height: number };
@@ -13,6 +13,8 @@ export interface PdfStructureResult {
   pageCount: number;
   extractedAt: string;
   blocks: DocumentBlock[];
+  fingerprint: string;
+  pages: PdfPageSource[];
   error?: string;
 }
 
@@ -81,16 +83,25 @@ function newBlock(documentId: string, type: DocumentBlock["type"], content: stri
 }
 
 export async function extractPdfStructure(documentId: string, bytes: Uint8Array): Promise<PdfStructureResult> {
+  const fingerprint = createHash("sha256").update(bytes).digest("hex");
   let loaded: { destroy: () => Promise<void>; numPages: number; getPage: (page: number) => Promise<any> } | null = null;
   try {
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
     loaded = await pdfjs.getDocument({ data: new Uint8Array(bytes), useSystemFonts: true, stopAtErrors: true }).promise;
     const blocks: DocumentBlock[] = [];
+    const pages: PdfPageSource[] = [];
     for (let pageNumber = 1; pageNumber <= loaded.numPages; pageNumber++) {
       const page = await loaded.getPage(pageNumber);
       const textContent = await page.getTextContent({ disableNormalization: false });
       const textItems: TextItem[] = textContent.items.flatMap((raw: any, index: number) => typeof raw?.str === "string" ? [{ index, str: raw.str, x: Number(raw.transform?.[4] || 0), y: Number(raw.transform?.[5] || 0), width: Number(raw.width || 0), height: Math.abs(Number(raw.height || raw.transform?.[3] || 0)) }] : []);
       if (textItems.some((item) => item.str.includes("\uFFFD"))) throw new Error(`Page ${pageNumber} contains an invalid Unicode character mapping`);
+      let textOffset = 0;
+      const canonicalItems = textItems.map((item) => {
+        const startOffset = textOffset; textOffset += item.str.length;
+        return { index: item.index, text: item.str, startOffset, endOffset: textOffset, bbox: [item.x, item.y, item.x + item.width, item.y + item.height] as [number, number, number, number] };
+      });
+      const viewBox = page.view.map(Number) as [number, number, number, number];
+      pages.push({ pageNumber, width: Math.abs(viewBox[2] - viewBox[0]), height: Math.abs(viewBox[3] - viewBox[1]), viewBox, rotation: Number(page.rotate || 0), text: textItems.map((item) => item.str).join(""), items: canonicalItems, source: canonicalItems.some((item) => item.text.trim()) ? "native" : "none", confidence: canonicalItems.some((item) => item.text.trim()) ? 1 : 0 });
       const lines = groupTextLines(textItems); const detectedTables = tableRuns(lines);
       const tableLineIndices = new Set(detectedTables.flatMap((table) => Array.from({ length: table.end - table.start }, (_, offset) => table.start + offset)));
       const pageBlocks: DocumentBlock[] = [];
@@ -123,8 +134,8 @@ export async function extractPdfStructure(documentId: string, bytes: Uint8Array)
       pageBlocks.sort((left, right) => (right.pdf?.bbox[3] || 0) - (left.pdf?.bbox[3] || 0) || (left.pdf?.bbox[0] || 0) - (right.pdf?.bbox[0] || 0)); blocks.push(...pageBlocks);
     }
     blocks.forEach((item, order) => { item.order = order; });
-    return { version: PDF_STRUCTURE_VERSION, status: blocks.some((item) => item.type !== "image") ? "complete" : "visual-only", pageCount: loaded.numPages, extractedAt: new Date().toISOString(), blocks };
+    return { version: PDF_STRUCTURE_VERSION, status: blocks.some((item) => item.type !== "image") ? "complete" : "visual-only", pageCount: loaded.numPages, extractedAt: new Date().toISOString(), blocks, fingerprint, pages };
   } catch (error) {
-    return { version: PDF_STRUCTURE_VERSION, status: "failed", pageCount: loaded?.numPages || 0, extractedAt: new Date().toISOString(), blocks: [], error: error instanceof Error ? error.message : "Unknown PDF structure error" };
+    return { version: PDF_STRUCTURE_VERSION, status: "failed", pageCount: loaded?.numPages || 0, extractedAt: new Date().toISOString(), blocks: [], fingerprint, pages: [], error: error instanceof Error ? error.message : "Unknown PDF structure error" };
   } finally { if (loaded) await loaded.destroy(); }
 }

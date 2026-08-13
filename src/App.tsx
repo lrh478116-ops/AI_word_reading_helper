@@ -11,7 +11,7 @@ import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type L
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
 import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
-import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
+import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, PdfSelectionInfo, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import { buildTipForest, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
 
 type Screen = { type: "library"; tab: "all" | "favorites" | "trash" } | { type: "editor"; id: string };
@@ -416,7 +416,7 @@ function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item:
   );
 }
 
-function SelectionToolbar({ selection, onCreate, onClose }: { selection: SelectionInfo | ChatSelectionInfo; onCreate: () => void; onClose: () => void }) {
+function SelectionToolbar({ selection, onCreate, onClose }: { selection: SelectionInfo | PdfSelectionInfo | ChatSelectionInfo; onCreate: () => void; onClose: () => void }) {
   const { t } = useI18n();
   const left = Math.max(14, Math.min(window.innerWidth - 310, selection.rect.left + selection.rect.width / 2 - 145));
   const top = Math.max(10, selection.rect.top - 52);
@@ -528,7 +528,7 @@ function TipPanel({ tip, childTips, streamingText, streamingSkills, isStreaming,
   return (
     <aside className={`tip-panel ${contextMode ? "tip-panel-context" : ""}`} data-tip-panel={tip.id}>
       <header className="tip-head"><div><span className="tip-kicker"><Sparkles size={13} />{contextMode ? t("tip.parentConversation") : t("tip.independent")}</span><h2>{tip.title}</h2></div>{contextMode ? <button className="icon-button" onClick={onFocus} title={t("tip.focusConversation")}><ChevronLeft size={18} /></button> : <button className="icon-button" onClick={onCollapse} title={t("tip.collapse")}><PanelRightClose size={18} /></button>}</header>
-      <div className="selected-quote"><p>{tip.anchorType === "message" ? t("tip.selectedChat") : t("tip.selected")}</p><blockquote>{tip.selectedText}</blockquote><div className="tip-context-controls"><span className={`anchor-badge ${tip.anchorStatus}`}>{tip.anchorStatus === "valid" ? t("tip.anchorValid") : tip.anchorStatus === "recovered" ? t("tip.anchorRecovered") : t("tip.anchorLost")}</span><button className={tip.memoryEnabled === false ? "" : "active"} onClick={onToggleMemory} title={t("tip.memoryHint")}><Brain size={12} />{tip.memoryEnabled === false ? t("tip.memoryOff") : t("tip.memoryOn")}</button></div></div>
+      <div className="selected-quote"><p>{tip.anchorType === "message" ? t("tip.selectedChat") : tip.anchorType === "pdf" ? t("tip.selectedPdf", { page: tip.pdfAnchor?.pageNumber || 1 }) : t("tip.selected")}</p><blockquote>{tip.selectedText}</blockquote><div className="tip-context-controls"><span className={`anchor-badge ${tip.anchorStatus}`}>{tip.anchorStatus === "valid" ? t("tip.anchorValid") : tip.anchorStatus === "recovered" ? t("tip.anchorRecovered") : t("tip.anchorLost")}</span><button className={tip.memoryEnabled === false ? "" : "active"} onClick={onToggleMemory} title={t("tip.memoryHint")}><Brain size={12} />{tip.memoryEnabled === false ? t("tip.memoryOff") : t("tip.memoryOn")}</button></div></div>
       <div className="message-list">
         {tip.messages.length === 0 && !streamingText && <div className="tip-welcome"><div><WandSparkles size={20} /></div><h3>{t("tip.start")}</h3><p>{t("tip.welcome")}</p><div className="tip-prompts">{prompts.map(([key, prompt]) => <button key={key} onClick={() => onSend(prompt)}>{t(key)}</button>)}</div></div>}
         {tip.messages.map((message) => <div className={`message ${message.role}`} key={message.id} data-message-id={message.id}>{message.role === "assistant" && <span className="assistant-mark"><Sparkles size={13} /></span>}<div>{message.role === "assistant" && <SkillResults skills={message.skills} />}<MessageContent tip={tip} message={message} childTips={childTips} onSelection={onMessageSelection} onOpenTip={onOpenTip} />{message.role === "assistant" && <button className="copy-message" onClick={() => void navigator.clipboard.writeText(message.content)}><Copy size={13} />{t("common.copy")}</button>}</div></div>)}
@@ -559,7 +559,7 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
   const [documentItem, setDocumentItem] = useState<DocumentItem | null>(null);
   const [tips, setTips] = useState<TipThread[]>([]);
   const [activeTipId, setActiveTipId] = useState<string | null>(null);
-  const [selection, setSelection] = useState<SelectionInfo | ChatSelectionInfo | null>(null);
+  const [selection, setSelection] = useState<SelectionInfo | PdfSelectionInfo | ChatSelectionInfo | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [error, setError] = useState("");
   const [streamingText, setStreamingText] = useState("");
@@ -622,6 +622,8 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
         const target = documentItem.blocks.find((b) => b.id === selection.blockId);
         if (!target) return;
         ({ tip } = await api.createTip(documentItem.id, { blockId: selection.blockId, selectedText: selection.text, startOffset: selection.startOffset, endOffset: selection.endOffset, prefixText: target.content.slice(Math.max(0, selection.startOffset - 32), selection.startOffset), suffixText: target.content.slice(selection.endOffset, selection.endOffset + 32) }));
+      } else if (selection.source === "pdf") {
+        ({ tip } = await api.createPdfTip(documentItem.id, { selectedText: selection.text, prefixText: selection.prefixText, suffixText: selection.suffixText, pdfAnchor: selection.pdfAnchor }));
       } else {
         const parent = tips.find((item) => item.id === selection.parentTipId);
         const message = parent?.messages.find((item) => item.id === selection.messageId);
@@ -705,7 +707,7 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
             <div className="page-meta"><span>{documentItem.sourceType === "blank" ? t("editor.personalNote") : t("editor.imported", { type: documentItem.sourceType.toUpperCase() })}</span><span>{t("editor.lastEdited", { time: timeAgo(documentItem.updatedAt, language, t) })}</span></div>
             <input className="document-title" value={documentItem.title} onChange={(e) => updateTitle(e.target.value)} placeholder={t("editor.untitled")} />
             <div className="document-rule" />
-            {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} blocks={documentItem.blocks} structure={documentItem.pdfStructure} tipsByBlock={tipsByBlock} onSelection={setSelection} onOpenTip={openTip} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), structured: t("pdf.structured"), original: t("pdf.original"), structureHint: t("pdf.structureHint"), tableHeuristic: (confidence) => t("pdf.tableHeuristic", { confidence }), imageAlt: (page) => t("pdf.imageAlt", { page }), structureFailed: (error) => t("pdf.structureFailed", { error }), visualOnly: t("pdf.visualOnly"), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }) }} /> : <>
+            {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} blocks={documentItem.blocks} structure={documentItem.pdfStructure} tipsByBlock={tipsByBlock} onSelection={setSelection} onOpenTip={openTip} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), structured: t("pdf.structured"), original: t("pdf.original"), structureHint: t("pdf.structureHint"), tableHeuristic: (confidence) => t("pdf.tableHeuristic", { confidence }), imageAlt: (page) => t("pdf.imageAlt", { page }), structureFailed: (error) => t("pdf.structureFailed", { error }), visualOnly: t("pdf.visualOnly"), exportAnnotations: t("pdf.exportAnnotations"), exportingAnnotations: t("pdf.exportingAnnotations"), runOcr: t("pdf.runOcr"), runningOcr: t("pdf.runningOcr"), ocrSource: (confidence) => t("pdf.ocrSource", { confidence }), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }) }} /> : <>
               <div className="blocks">
                 {documentItem.blocks.map((item) => <EditableBlock key={item.id} item={item} tips={tipsByBlock[item.id] || []} onChange={updateBlock} onSelection={setSelection} onOpenTip={openTip} />)}
               </div>

@@ -1,4 +1,4 @@
-import type { AiSettings, AiSettingsInput, DocumentBlock, DocumentItem, SkillTrace, TipThread, User } from "./types";
+import type { AiSettings, AiSettingsInput, DocumentBlock, DocumentItem, PdfPageSource, PdfTipAnchor, SkillTrace, TipThread, User } from "./types";
 import type { PromptLanguage } from "./prompts";
 
 const TOKEN_KEY = "ai-tip-token";
@@ -66,6 +66,16 @@ export const api = {
   },
   createTip: (documentId: string, payload: { blockId: string; selectedText: string; startOffset: number; endOffset: number; prefixText: string; suffixText: string }) =>
     request<{ tip: TipThread }>(`/documents/${documentId}/tips`, { method: "POST", body: JSON.stringify(payload) }),
+  createPdfTip: (documentId: string, payload: { selectedText: string; prefixText: string; suffixText: string; pdfAnchor: PdfTipAnchor }) =>
+    request<{ tip: TipThread }>(`/documents/${documentId}/tips`, { method: "POST", body: JSON.stringify({ anchorType: "pdf", ...payload }) }),
+  exportPdfAnnotations: async (documentId: string) => {
+    const response = await fetch(`/api/documents/${documentId}/export-annotations`, { headers: { Authorization: `Bearer ${session.get()}` } });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || "PDF 批注副本导出失败"); }
+    const disposition = response.headers.get("content-disposition") || ""; const match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    return { blob: await response.blob(), filename: match ? decodeURIComponent(match[1]) : "AI-Tip-annotations.pdf" };
+  },
+  savePdfOcrPage: (documentId: string, pdfFingerprint: string, page: PdfPageSource) =>
+    request<{ page: PdfPageSource }>(`/documents/${documentId}/pdf-ocr`, { method: "POST", body: JSON.stringify({ pdfFingerprint, page }) }),
   createChildTip: (parentTipId: string, payload: { messageId: string; selectedText: string; startOffset: number; endOffset: number; prefixText: string; suffixText: string }) =>
     request<{ tip: TipThread }>(`/tips/${parentTipId}/children`, { method: "POST", body: JSON.stringify(payload) }),
   updateTip: (tipId: string, patch: Partial<Pick<TipThread, "status" | "title" | "memoryEnabled">>) =>

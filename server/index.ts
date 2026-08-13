@@ -6,8 +6,8 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import OpenAI from "openai";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { lookup } from "node:dns/promises";
@@ -16,11 +16,13 @@ import { collectTipSubtreeIds, plainMessageContent } from "../src/tip-tree.js";
 import { CORRECTNESS_RULES, DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, normalizePromptLanguage, resolveSystemPrompt, type PromptLanguage } from "../src/prompts.js";
 import { PROVIDER_REGISTRY, migrateProviderPreset, providerDefinition } from "../src/providers.js";
 import { PDF_STRUCTURE_VERSION, extractPdfStructure } from "./pdf-structure.js";
+import { PDF_TIP_ANCHOR_VERSION, createAnnotatedPdfCopy, validatePdfTipAnchor } from "./pdf-tip.js";
 import { normalizeLanguage, translate } from "../src/i18n.js";
 
 export { DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, resolveSystemPrompt } from "../src/prompts.js";
 export { PROVIDER_REGISTRY, migrateProviderPreset } from "../src/providers.js";
 export { PDF_STRUCTURE_VERSION, extractPdfStructure } from "./pdf-structure.js";
+export { PDF_TIP_ANCHOR_VERSION, createAnnotatedPdfCopy, validatePdfTipAnchor } from "./pdf-tip.js";
 
 const app = express();
 if (existsSync(path.resolve(".env"))) process.loadEnvFile(path.resolve(".env"));
@@ -29,7 +31,8 @@ const jwtSecret = process.env.JWT_SECRET || "ai-tip-local-development-secret-cha
 const dataDir = process.env.AI_TIP_DATA_DIR ? path.resolve(process.env.AI_TIP_DATA_DIR) : path.resolve("data");
 const storePath = path.join(dataDir, "store.json");
 const uploadsDir = path.join(dataDir, "uploads");
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const uploadTempDir = path.join(dataDir, "upload-temp");
+mkdirSync(uploadTempDir, { recursive: true });
 
 interface StoredUser extends User { passwordHash: string }
 interface StoredAiSettings extends Omit<AiSettings, "apiKeyConfigured" | "apiKeyMasked" | "searchApiKeyConfigured" | "searchApiKeyMasked"> {
@@ -46,8 +49,7 @@ interface Database {
 interface AuthedRequest extends Request { user?: StoredUser }
 
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_FILE_SIZE },
+  storage: multer.diskStorage({ destination: uploadTempDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }),
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(decodeUploadFilename(file.originalname)).toLowerCase();
     cb(null, [".txt", ".md", ".markdown", ".docx", ".pdf"].includes(ext));
@@ -55,6 +57,17 @@ const upload = multer({
 });
 
 app.use(express.json({ limit: "2mb" }));
+
+const appRoot = process.env.AI_TIP_APP_ROOT ? path.resolve(process.env.AI_TIP_APP_ROOT) : path.resolve(".");
+app.use("/ocr-assets/worker", express.static(path.join(appRoot, "node_modules", "tesseract.js", "dist"), { fallthrough: false, immutable: true, maxAge: "1y" }));
+app.use("/ocr-assets/core", express.static(path.join(appRoot, "node_modules", "tesseract.js-core"), { fallthrough: false, immutable: true, maxAge: "1y" }));
+app.get("/ocr-assets/lang/:language", (req, res) => {
+  const language = String(req.params.language || "");
+  if (!/^(chi_sim|eng)\.traineddata\.gz$/.test(language)) return res.status(404).end();
+  const code = language.startsWith("chi_sim") ? "chi_sim" : "eng";
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.sendFile(path.join(appRoot, "node_modules", "@tesseract.js-data", code, "4.0.0_best_int", language));
+});
 
 let mutationTail: Promise<void> = Promise.resolve();
 async function acquireMutationLock() {
@@ -143,7 +156,7 @@ async function readDb(): Promise<Database> {
   const settings = (db.settings || []).map((item) => ({ ...item, apiKey: decodeSecret(item.apiKey), searchApiKey: decodeSecret(item.searchApiKey) }));
   const tips = (db.tips || []).map((tip) => ({
     ...tip,
-    anchorType: tip.anchorType === "message" ? "message" as const : "document" as const,
+    anchorType: tip.anchorType === "message" ? "message" as const : tip.anchorType === "pdf" ? "pdf" as const : "document" as const,
     depth: Number.isInteger(tip.depth) && tip.depth > 0 ? tip.depth : tip.parentTipId ? 2 : 1,
     memoryEnabled: tip.memoryEnabled !== false
   }));
@@ -232,12 +245,12 @@ async function ensureDemoUser() {
   for (const document of db.documents.filter((item) => item.sourceType === "pdf" && item.pdfStructure?.version !== PDF_STRUCTURE_VERSION)) {
     const sourcePath = document.originalName ? path.join(uploadsDir, document.id, path.basename(document.originalName)) : "";
     if (!sourcePath || !existsSync(sourcePath)) {
-      document.pdfStructure = { version: PDF_STRUCTURE_VERSION, status: "failed", pageCount: 0, extractedAt: now(), error: "PDF source file is missing" };
+      document.pdfStructure = { version: PDF_STRUCTURE_VERSION, status: "failed", pageCount: 0, extractedAt: now(), error: "PDF source file is missing", fingerprint: "", pages: [] };
       changed = true;
       continue;
     }
     const structure = await extractPdfStructure(document.id, await readFile(sourcePath));
-    document.pdfStructure = { version: structure.version, status: structure.status, pageCount: structure.pageCount, extractedAt: structure.extractedAt, error: structure.error };
+    document.pdfStructure = { version: structure.version, status: structure.status, pageCount: structure.pageCount, extractedAt: structure.extractedAt, error: structure.error, fingerprint: structure.fingerprint, pages: structure.pages };
     if (structure.status !== "failed") document.blocks = structure.blocks;
     changed = true;
   }
@@ -505,6 +518,51 @@ app.get("/api/documents/:id/source", auth, async (req: AuthedRequest, res) => {
   }
 });
 
+app.get("/api/documents/:id/export-annotations", auth, async (req: AuthedRequest, res) => {
+  const db = await readDb();
+  const document = db.documents.find((item) => item.id === req.params.id && item.userId === req.user!.id);
+  if (!document || document.sourceType !== "pdf" || !document.originalName) return res.status(404).json({ error: "PDF 原文件不存在" });
+  const sourcePath = path.join(uploadsDir, document.id, path.basename(document.originalName));
+  if (!existsSync(sourcePath)) return res.status(404).json({ error: "PDF 原文件不存在" });
+  const tips = db.tips.filter((tip) => tip.userId === req.user!.id && tip.documentId === document.id && tip.anchorType === "pdf" && validatePdfTipAnchor(document.pdfStructure, tip.pdfAnchor, tip.selectedText).ok);
+  if (!tips.length) return res.status(400).json({ error: "当前 PDF 没有可导出的有效页面 Tip" });
+  try {
+    const source = await readFile(sourcePath); const exported = await createAnnotatedPdfCopy(source, tips);
+    const baseName = path.basename(document.originalName, path.extname(document.originalName)); const outputName = `${baseName}-AI-Tip-annotations.pdf`;
+    res.setHeader("Content-Type", "application/pdf"); res.setHeader("Content-Length", String(exported.length));
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(outputName).replace(/'/g, "%27")}`);
+    res.setHeader("Cache-Control", "private, no-store"); res.send(Buffer.from(exported));
+  } catch (error) { res.status(422).json({ error: `无法导出 PDF 批注副本：${error instanceof Error ? error.message : "未知错误"}` }); }
+});
+
+app.post("/api/documents/:id/pdf-ocr", auth, async (req: AuthedRequest, res) => {
+  const db = await readDb(); const document = db.documents.find((item) => item.id === req.params.id && item.userId === req.user!.id);
+  if (!document || document.sourceType !== "pdf" || !document.pdfStructure) return res.status(404).json({ error: "PDF 文档不存在" });
+  if (req.body?.pdfFingerprint !== document.pdfStructure.fingerprint) return res.status(409).json({ error: "OCR 结果与当前 PDF 指纹不一致" });
+  const input = req.body?.page; const pageNumber = Number(input?.pageNumber); const existing = document.pdfStructure.pages.find((page) => page.pageNumber === pageNumber);
+  if (!existing) return res.status(400).json({ error: "OCR 页码超出 PDF 范围" });
+  if (existing.source === "native") return res.status(409).json({ error: "该页已有原生文字层，不允许 OCR 覆盖" });
+  const text = String(input?.text || ""); const items = Array.isArray(input?.items) ? input.items : [];
+  if (!text.trim() || text.length > 1_000_000 || items.length < 1 || items.length > 100_000) return res.status(400).json({ error: "OCR 没有产生可持久化的文字" });
+  const minX = Math.min(existing.viewBox[0], existing.viewBox[2]); const maxX = Math.max(existing.viewBox[0], existing.viewBox[2]);
+  const minY = Math.min(existing.viewBox[1], existing.viewBox[3]); const maxY = Math.max(existing.viewBox[1], existing.viewBox[3]);
+  let previousEnd = 0;
+  for (let itemIndex = 0; itemIndex < items.length; itemIndex += 1) {
+    const item = items[itemIndex];
+    const start = Number(item.startOffset); const end = Number(item.endOffset); const bbox = item.bbox;
+    const validBox = Array.isArray(bbox) && bbox.length === 4 && bbox.every((value: unknown) => typeof value === "number" && Number.isFinite(value))
+      && bbox[0] >= minX && bbox[1] >= minY && bbox[2] <= maxX && bbox[3] <= maxY && bbox[2] > bbox[0] && bbox[3] > bbox[1];
+    if (Number(item.index) !== itemIndex || !Number.isInteger(start) || !Number.isInteger(end) || start !== previousEnd || end <= start || end > text.length || text.slice(start, end) !== String(item.text) || !validBox) return res.status(400).json({ error: "OCR 文字偏移或坐标无效" });
+    previousEnd = end;
+  }
+  if (previousEnd !== text.length) return res.status(400).json({ error: "OCR 文字没有形成完整、连续的页面文本" });
+  const confidence = Number(input?.confidence);
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return res.status(400).json({ error: "OCR 置信度无效" });
+  const page = { ...existing, text, items, source: "ocr" as const, confidence, ocr: { engine: "tesseract.js" as const, version: "7.0.0", languages: ["chi_sim", "eng"], recognizedAt: now() } };
+  document.pdfStructure.pages = document.pdfStructure.pages.map((item) => item.pageNumber === pageNumber ? page : item); document.updatedAt = now(); await writeDb(db);
+  res.json({ page });
+});
+
 app.post("/api/documents", auth, async (req: AuthedRequest, res) => {
   const db = await readDb();
   const id = makeId();
@@ -522,6 +580,12 @@ function recoverAnchors(document: DocumentItem, tips: TipThread[]) {
   let changed = false;
   for (const tip of tips) {
     if (tip.anchorType === "message") continue;
+    if (tip.anchorType === "pdf") {
+      const validation = validatePdfTipAnchor(document.pdfStructure, tip.pdfAnchor, tip.selectedText);
+      const nextStatus = validation.ok ? "valid" : "orphaned";
+      if (tip.anchorStatus !== nextStatus) { tip.anchorStatus = nextStatus; changed = true; }
+      continue;
+    }
     const target = document.blocks.find((item) => item.id === tip.blockId);
     if (!target) {
       if (tip.anchorStatus !== "orphaned") changed = true;
@@ -669,50 +733,70 @@ function htmlToBlocks(documentId: string, html: string): DocumentBlock[] {
 }
 
 app.post("/api/documents/import", auth, upload.single("file"), async (req: AuthedRequest, res) => {
-  if (!req.file) return res.status(400).json({ error: "请选择 TXT、Markdown、DOCX 或 PDF 文件（最大 10MB）" });
-  const safeOriginalName = safeUploadFilename(req.file.originalname);
-  const ext = path.extname(safeOriginalName).toLowerCase();
-  const id = makeId();
-  const timestamp = now();
-  let blocks: DocumentBlock[];
-  let pdfStructure: DocumentItem["pdfStructure"];
+  if (!req.file) return res.status(400).json({ error: "请选择 TXT、Markdown、DOCX 或 PDF 文件" });
+  const temporaryPath = req.file.path;
   try {
-    if (ext === ".pdf") {
-      if (!hasValidPdfContainer(req.file.buffer)) return res.status(422).json({ error: "PDF 文件签名无效，请选择真实的 PDF 文件" });
-      const structure = await extractPdfStructure(id, req.file.buffer);
-      blocks = structure.blocks;
-      pdfStructure = { version: structure.version, status: structure.status, pageCount: structure.pageCount, extractedAt: structure.extractedAt, error: structure.error };
-    } else if (ext === ".docx") {
-      const converted = await mammoth.convertToHtml({ buffer: req.file.buffer });
-      blocks = htmlToBlocks(id, converted.value);
-    } else {
-      let text = req.file.buffer.toString("utf8");
-      if (text.includes("�")) text = new TextDecoder("gb18030").decode(req.file.buffer);
-      blocks = ext === ".txt"
-        ? text.split(/\n\s*\n|\r?\n/).filter(Boolean).map((content, order) => block(id, "paragraph", content.trim(), order))
-        : markdownTokensToBlocks(id, new Lexer().lex(text));
-      if (!blocks.length) blocks = [block(id, "paragraph", "", 0)];
+    const input = await readFile(temporaryPath);
+    const safeOriginalName = safeUploadFilename(req.file.originalname);
+    const ext = path.extname(safeOriginalName).toLowerCase();
+    const id = makeId(); const timestamp = now(); let blocks: DocumentBlock[]; let pdfStructure: DocumentItem["pdfStructure"];
+    try {
+      if (ext === ".pdf") {
+        if (!hasValidPdfContainer(input)) return res.status(422).json({ error: "PDF 文件签名无效，请选择真实的 PDF 文件" });
+        const structure = await extractPdfStructure(id, input); blocks = structure.blocks;
+        pdfStructure = { version: structure.version, status: structure.status, pageCount: structure.pageCount, extractedAt: structure.extractedAt, error: structure.error, fingerprint: structure.fingerprint, pages: structure.pages };
+      } else if (ext === ".docx") {
+        const converted = await mammoth.convertToHtml({ buffer: input }); blocks = htmlToBlocks(id, converted.value);
+      } else {
+        let text = input.toString("utf8"); if (text.includes("�")) text = new TextDecoder("gb18030").decode(input);
+        blocks = ext === ".txt" ? text.split(/\n\s*\n|\r?\n/).filter(Boolean).map((content, order) => block(id, "paragraph", content.trim(), order)) : markdownTokensToBlocks(id, new Lexer().lex(text));
+        if (!blocks.length) blocks = [block(id, "paragraph", "", 0)];
+      }
+    } catch (error) {
+      return res.status(422).json({ error: `文档解析失败：${error instanceof Error ? error.message : "未知格式错误"}` });
     }
-  } catch (error) {
-    return res.status(422).json({ error: `文档解析失败：${error instanceof Error ? error.message : "未知格式错误"}` });
+    const document: DocumentItem = {
+      id, userId: req.user!.id, title: path.basename(safeOriginalName, ext), sourceType: ext === ".txt" ? "txt" : ext === ".docx" ? "docx" : ext === ".pdf" ? "pdf" : "markdown",
+      originalName: safeOriginalName, favorite: false, status: "active", blocks, pdfStructure,
+      createdAt: timestamp, updatedAt: timestamp, lastOpenedAt: timestamp, tipCount: 0
+    };
+    const db = await readDb(); db.documents.push(document);
+    await mkdir(path.join(uploadsDir, id), { recursive: true }); await copyFile(temporaryPath, path.join(uploadsDir, id, safeOriginalName)); await writeDb(db);
+    // Make cleanup part of the successful upload contract: the client must not
+    // receive 201 while a large temporary upload is still left behind.
+    await rm(temporaryPath, { force: true });
+    res.status(201).json({ document });
+  } finally {
+    await rm(temporaryPath, { force: true });
   }
-  const document: DocumentItem = {
-    id, userId: req.user!.id, title: path.basename(safeOriginalName, ext), sourceType: ext === ".txt" ? "txt" : ext === ".docx" ? "docx" : ext === ".pdf" ? "pdf" : "markdown",
-    originalName: safeOriginalName, favorite: false, status: "active", blocks, pdfStructure,
-    createdAt: timestamp, updatedAt: timestamp, lastOpenedAt: timestamp, tipCount: 0
-  };
-  const db = await readDb();
-  db.documents.push(document);
-  await mkdir(path.join(uploadsDir, id), { recursive: true });
-  await writeFile(path.join(uploadsDir, id, safeOriginalName), req.file.buffer);
-  await writeDb(db);
-  res.status(201).json({ document });
 });
 
 app.post("/api/documents/:id/tips", auth, async (req: AuthedRequest, res) => {
   const db = await readDb();
   const document = db.documents.find((item) => item.id === req.params.id && item.userId === req.user!.id);
   if (!document) return res.status(404).json({ error: "文档不存在" });
+  if (req.body?.anchorType === "pdf") {
+    if (document.sourceType !== "pdf") return res.status(400).json({ error: "只有 PDF 文档可以创建 PDF 页面锚点" });
+    const selected = String(req.body.selectedText || "");
+    const validation = validatePdfTipAnchor(document.pdfStructure, req.body.pdfAnchor, selected);
+    if (!validation.ok) return res.status(400).json({ error: validation.error });
+    const anchor = req.body.pdfAnchor;
+    const overlaps = db.tips.some((item) => {
+      const existing = item.pdfAnchor;
+      if (!existing) return false;
+      return item.userId === req.user!.id && item.documentId === document.id && item.anchorType === "pdf" && existing.pageNumber === anchor.pageNumber && anchor.textStart < existing.textEnd && anchor.textEnd > existing.textStart;
+    });
+    if (overlaps) return res.status(409).json({ error: "该 PDF 页面选区已经存在 Tip 或与现有 Tip 重叠" });
+    const timestamp = now();
+    const tip: TipThread = {
+      id: makeId(), userId: req.user!.id, documentId: document.id, blockId: `pdf:page:${anchor.pageNumber}`,
+      anchorType: "pdf", pdfAnchor: anchor, depth: 1, selectedText: selected, startOffset: anchor.textStart, endOffset: anchor.textEnd,
+      prefixText: String(req.body.prefixText || "").slice(-64), suffixText: String(req.body.suffixText || "").slice(0, 64), selectedTextHash: hash(selected), title: selected.slice(0, 28), summary: "",
+      status: "open", anchorStatus: "valid", memoryEnabled: true, messages: [], createdAt: timestamp, updatedAt: timestamp
+    };
+    db.tips.push(tip); document.tipCount += 1; document.updatedAt = timestamp; await writeDb(db);
+    return res.status(201).json({ tip });
+  }
   const { blockId, selectedText, startOffset, endOffset, prefixText, suffixText } = req.body as Record<string, string | number>;
   const target = document.blocks.find((item) => item.id === blockId);
   if (!target || !String(selectedText).trim()) return res.status(400).json({ error: "选区已失效，请重新选择文字" });
@@ -818,6 +902,11 @@ function contextFor(document: DocumentItem, tip: TipThread, tips: TipThread[]) {
     const parent = tips.find((item) => item.id === tip.parentTipId && item.documentId === document.id);
     const message = parent?.messages.find((item) => item.id === tip.anchorMessageId);
     return { heading: parent?.title || "父 Tip 对话", neighborhood: message ? plainMessageContent(message.content) : tip.selectedText };
+  }
+  if (tip.anchorType === "pdf" && tip.pdfAnchor) {
+    const page = document.pdfStructure?.pages.find((item) => item.pageNumber === tip.pdfAnchor!.pageNumber);
+    const start = Math.max(0, tip.pdfAnchor.textStart - 500); const end = Math.min(page?.text.length || 0, tip.pdfAnchor.textEnd + 500);
+    return { heading: `PDF 第 ${tip.pdfAnchor.pageNumber} 页`, neighborhood: page?.text.slice(start, end) || tip.selectedText };
   }
   const index = document.blocks.findIndex((item) => item.id === tip.blockId);
   const neighborhood = document.blocks.slice(Math.max(0, index - 2), Math.min(document.blocks.length, index + 3));
@@ -1276,6 +1365,10 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => {
     }
     const foundDocument = db.documents.find((item) => item.id === foundTip.documentId && item.userId === req.user!.id);
     if (!foundDocument) return res.status(404).json({ error: "关联文档不存在" });
+    if (foundTip.anchorType === "pdf") {
+      const validation = validatePdfTipAnchor(foundDocument.pdfStructure, foundTip.pdfAnchor, foundTip.selectedText);
+      if (!validation.ok) return res.status(409).json({ error: `PDF Tip 锚点已失效，无法继续回答：${validation.error}` });
+    }
     tip = foundTip; document = foundDocument;
     const userMessage: TipMessage = { id: makeId(), tipId: tip.id, role: "user", content: question, createdAt: now() };
     tip.messages.push(userMessage);
@@ -1546,9 +1639,6 @@ if (existsSync(distDir)) {
 }
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
-    return res.status(413).json({ error: "文件不能超过 10MB" });
-  }
   console.error(error);
   res.status(500).json({ error: "服务暂时不可用" });
 });
