@@ -1,7 +1,7 @@
 process.env.AI_TIP_EMBEDDED = "1";
 
 const { normalizeLanguage, translate } = await import("../src/i18n.ts");
-const { DEFAULT_SYSTEM_PROMPTS, assessQuestionProfessionalism, isLegacyTransformerSeedDocument } = await import("../dist-electron/server.cjs");
+const { DEFAULT_SYSTEM_PROMPTS, PROVIDER_REGISTRY, assessQuestionProfessionalism, isLegacyTransformerSeedDocument, migrateProviderPreset } = await import("../dist-electron/server.cjs");
 
 if (normalizeLanguage("invalid") !== "zh-CN") throw new Error("非法语言没有回退为简体中文");
 if (translate("zh-CN", "auth.localUse") !== "仅本地使用") throw new Error("中文本地入口文案错误");
@@ -9,6 +9,21 @@ if (translate("en", "auth.localUse") !== "Local use only") throw new Error("英�
 if (translate("zh-CN", "auth.localUse") === translate("en", "auth.localUse")) throw new Error("语言输出没有因语言状态改变");
 if (translate("zh-CN", "nav.logout") !== "退出登录" || translate("en", "nav.logout") !== "Sign out") throw new Error("退出登录文案未接入语言表");
 if (!DEFAULT_SYSTEM_PROMPTS.en.startsWith("You are") || /[\u3400-\u9fff]/u.test(DEFAULT_SYSTEM_PROMPTS.en)) throw new Error("英文内置 Prompt 仍包含中文默认内容");
+const providerValues = Object.values(PROVIDER_REGISTRY || {});
+if (providerValues.length !== 8 || providerValues.some((provider) => !provider.labelKey || (provider.id !== "custom" && (!provider.baseURL || !provider.defaultModel)))) throw new Error("共享接口注册表不完整");
+const retiredDefaults = new Set(providerValues.flatMap((provider) => provider.retiredModels || []));
+if (providerValues.some((provider) => retiredDefaults.has(provider.defaultModel))) throw new Error("接口默认型号仍命中已知停用型号");
+if (PROVIDER_REGISTRY.deepseek.defaultModel !== "deepseek-v4-flash" || PROVIDER_REGISTRY.moonshot.defaultModel !== "kimi-k2.6" || PROVIDER_REGISTRY.zhipu.defaultModel !== "glm-5.2" || PROVIDER_REGISTRY.gemini.defaultModel !== "gemini-3.6-flash") throw new Error("接口注册表没有更新为已核对的当前型号");
+for (const provider of providerValues) {
+  const englishLabel = translate("en", provider.labelKey);
+  if (englishLabel === provider.labelKey || /[\u3400-\u9fff]/u.test(englishLabel)) throw new Error(`英文接口服务商仍显示中文或缺少翻译：${provider.id}=${englishLabel}`);
+}
+const migratedDeepSeek = migrateProviderPreset({ provider: "deepseek", baseURL: "https://api.deepseek.com", model: "deepseek-chat" });
+if (migratedDeepSeek.model !== "deepseek-v4-flash" || !migratedDeepSeek.changed) throw new Error("已停用 DeepSeek 内置默认值没有迁移");
+const customModel = migrateProviderPreset({ provider: "custom", baseURL: "https://example.com/v1", model: "deepseek-chat" });
+if (customModel.model !== "deepseek-chat" || customModel.changed) throw new Error("自定义接口模型被错误迁移");
+const ollamaModel = migrateProviderPreset({ provider: "ollama", baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b" });
+if (ollamaModel.model !== "qwen3:8b" || ollamaModel.changed) throw new Error("用户本机 Ollama 模型被错误替换");
 
 const legacy = {
   title: "理解 Transformer 的注意力机制",

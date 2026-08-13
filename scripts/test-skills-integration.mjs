@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 const tempData = await mkdtemp(path.join(os.tmpdir(), "ai-tip-skills-"));
+const semanticPdfBytes = Buffer.from((await readFile(new URL("./fixtures/semantic-pdf.pdf.base64", import.meta.url), "utf8")).replace(/\s+/g, ""), "base64");
 process.env.AI_TIP_EMBEDDED = "1";
 process.env.AI_TIP_DESKTOP = "1";
 process.env.AI_TIP_DATA_DIR = tempData;
@@ -50,6 +51,9 @@ await writeFile(path.join(tempData, "store.json"), JSON.stringify({
     id: "mojibake-document", userId: legacyUserId, title: "å®ä¹ è¿åº¦1", sourceType: "markdown", originalName: "å®ä¹ è¿åº¦1.md", favorite: false, status: "active",
     blocks: [{ id: "mojibake-block", documentId: "mojibake-document", type: "paragraph", content: "旧文件名迁移内容", order: 0, contentHash: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), tipCount: 0
+  }, {
+    id: "legacy-pdf-document", userId: legacyUserId, title: "Legacy PDF", sourceType: "pdf", originalName: "legacy-structured.pdf", favorite: false, status: "active",
+    blocks: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), tipCount: 0
   }],
   tips: [
     { id: "legacy-tip", userId: legacyUserId, documentId: legacyDocumentId, blockId: "legacy-paragraph", messages: [] },
@@ -62,10 +66,21 @@ await writeFile(path.join(tempData, "store.json"), JSON.stringify({
 await mkdir(path.join(tempData, "uploads", "mojibake-document"), { recursive: true });
 await writeFile(path.join(tempData, "uploads", "mojibake-document", "å®ä¹ è¿åº¦1.md"), "旧文件名迁移内容", "utf8");
 
+await mkdir(path.join(tempData, "uploads", "legacy-pdf-document"), { recursive: true });
+await writeFile(path.join(tempData, "uploads", "legacy-pdf-document", "legacy-structured.pdf"), semanticPdfBytes);
+
 const mock = createServer(async (req, res) => {
   let raw = "";
   for await (const chunk of req) raw += chunk;
   res.setHeader("Content-Type", "application/json");
+  if (req.url === "/empty/models") {
+    res.end(JSON.stringify({ object: "list", data: [] }));
+    return;
+  }
+  if (req.url === "/v1/models") {
+    res.end(JSON.stringify({ object: "list", data: [{ id: "mock-model", object: "model", owned_by: "integration" }, { id: "mock-model-pro", object: "model", owned_by: "integration" }] }));
+    return;
+  }
   if (req.url === "/usage") {
     res.end(JSON.stringify({ key: { usage: 12, limit: 1000 } }));
     return;
@@ -166,9 +181,13 @@ try {
   const token = login.token;
   const migratedNames = await request("/documents", {}, token);
   const migratedNameDocument = migratedNames.documents.find((item) => item.id === "mojibake-document");
+  const migratedPdfDocument = migratedNames.documents.find((item) => item.id === "legacy-pdf-document");
+  const migratedPdfTypes = new Set((migratedPdfDocument?.blocks || []).map((item) => item.type));
+  if (migratedPdfDocument?.pdfStructure?.status !== "complete" || !migratedPdfTypes.has("paragraph") || !migratedPdfTypes.has("table") || !migratedPdfTypes.has("image")) throw new Error(`旧 PDF 没有通过正式启动迁移获得语义结构：${JSON.stringify({ structure: migratedPdfDocument?.pdfStructure, types: [...migratedPdfTypes] })}`);
   if (migratedNameDocument?.title !== "实习进度1" || migratedNameDocument.originalName !== "实习进度1.md") throw new Error(`正式启动没有修复旧乱码标题：${JSON.stringify(migratedNameDocument)}`);
   if ((await readFile(path.join(tempData, "uploads", "mojibake-document", "实习进度1.md"), "utf8")) !== "旧文件名迁移内容") throw new Error("旧乱码磁盘文件没有与 originalName 同步迁移");
   await request("/documents/mojibake-document?permanent=true", { method: "DELETE" }, token);
+  await request("/documents/legacy-pdf-document?permanent=true", { method: "DELETE" }, token);
   const migrated = await request("/documents/migration-document", {}, token);
   const migratedRoot = migrated.tips.find((item) => item.id === "migration-root-tip");
   const migratedOrphan = migrated.tips.find((item) => item.id === "migration-orphan-tip");
@@ -181,6 +200,14 @@ try {
   await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchApiKey: "tvly-test", pythonEnabled: true }) }, token);
   const connectionTest = await request("/settings/test", { method: "POST", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchBudgetMode: "free", pythonEnabled: false }) }, token);
   if (!connectionTest.message.includes("988/1000") || searchRequests !== 0) throw new Error("额度查询不应消耗搜索请求");
+  const modelList = await request("/settings/models", { method: "POST", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", systemPrompt: chineseDefaultPrompt, webSearchEnabled: false, searchBudgetMode: "free", pythonEnabled: false, language: "en" }) }, token);
+  if (modelList.models.join(",") !== "mock-model,mock-model-pro") throw new Error(`模型刷新没有消费真实 /models 响应：${JSON.stringify(modelList)}`);
+  const emptyModelsResponse = await fetch(`${base}/settings/models`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/empty`, model: "mock-model", apiKey: "test-key", language: "en" }) });
+  const emptyModelsBody = await emptyModelsResponse.json();
+  if (emptyModelsResponse.status !== 502 || emptyModelsBody.error !== "The provider returned an empty model list") throw new Error(`空模型列表没有以英文明确失败：${JSON.stringify(emptyModelsBody)}`);
+  const invalidSettingsResponse = await fetch(`${base}/settings`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ provider: "custom", baseURL: "not-a-url", model: "mock-model", language: "en" }) });
+  const invalidSettingsBody = await invalidSettingsResponse.json();
+  if (invalidSettingsResponse.status !== 400 || invalidSettingsBody.error !== "The API URL must be a valid HTTP(S) URL") throw new Error(`英文接口校验仍返回中文：${JSON.stringify(invalidSettingsBody)}`);
   const persistedSettings = await readFile(path.join(tempData, "store.json"), "utf8");
   if (persistedSettings.includes("test-key") || persistedSettings.includes("tvly-test") || !persistedSettings.includes("safe:v1:")) throw new Error("API Key 未加密保存");
   const documents = await request("/documents", {}, token);
@@ -189,12 +216,19 @@ try {
   const registeredDocuments = await request("/documents", {}, registered.token);
   if (registeredDocuments.documents.length !== 0) throw new Error("注册路径仍然创建示例文档");
 
-  const pdfBytes = Buffer.from((await readFile(new URL("./fixtures/chinese-image.pdf.base64", import.meta.url), "utf8")).replace(/\s+/g, ""), "base64");
+  const pdfBytes = semanticPdfBytes;
   const pdfForm = new FormData();
   pdfForm.append("file", new Blob([pdfBytes], { type: "application/pdf" }), "中文图片资料.pdf");
   const importedPdfResponse = await fetch(`${base}/documents/import`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: pdfForm });
   const importedPdfBody = await importedPdfResponse.json();
   if (!importedPdfResponse.ok || importedPdfBody.document?.title !== "中文图片资料" || importedPdfBody.document?.originalName !== "中文图片资料.pdf" || importedPdfBody.document?.sourceType !== "pdf") throw new Error(`PDF 没有通过正式上传入口持久化正确标题：${JSON.stringify(importedPdfBody)}`);
+  const pdfTypes = new Set(importedPdfBody.document.blocks.map((item) => item.type));
+  if (importedPdfBody.document.pdfStructure?.status !== "complete" || !pdfTypes.has("paragraph") || !pdfTypes.has("table") || !pdfTypes.has("image")) throw new Error(`正式上传没有持久化 PDF 文本、表格和图片结构：${JSON.stringify({ structure: importedPdfBody.document.pdfStructure, types: [...pdfTypes] })}`);
+  const pdfParagraph = importedPdfBody.document.blocks.find((item) => item.type === "paragraph" && item.content.includes("可选择"));
+  const selectedPdfText = "可选择"; const selectedPdfStart = pdfParagraph?.content.indexOf(selectedPdfText) ?? -1;
+  if (!pdfParagraph || selectedPdfStart < 0) throw new Error("PDF 文本块没有进入可创建 Tip 的正式文档结构");
+  const pdfTip = await request(`/documents/${importedPdfBody.document.id}/tips`, { method: "POST", body: JSON.stringify({ blockId: pdfParagraph.id, selectedText: selectedPdfText, startOffset: selectedPdfStart, endOffset: selectedPdfStart + selectedPdfText.length, prefixText: pdfParagraph.content.slice(0, selectedPdfStart), suffixText: pdfParagraph.content.slice(selectedPdfStart + selectedPdfText.length) }) }, token);
+  if (pdfTip.tip.blockId !== pdfParagraph.id || pdfTip.tip.selectedText !== selectedPdfText) throw new Error("PDF DOM 文字没有通过正式 Tip API 形成可追溯锚点");
   const pdfSourceResponse = await fetch(`${base}/documents/${importedPdfBody.document.id}/source`, { headers: { Authorization: `Bearer ${token}` } });
   const returnedPdf = Buffer.from(await pdfSourceResponse.arrayBuffer());
   if (!pdfSourceResponse.ok || pdfSourceResponse.headers.get("content-type") !== "application/pdf" || createHash("sha256").update(returnedPdf).digest("hex") !== createHash("sha256").update(pdfBytes).digest("hex")) throw new Error("PDF 原始字节没有经过鉴权源接口无损返回");

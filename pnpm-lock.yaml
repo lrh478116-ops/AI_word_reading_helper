@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      pdfjs-dist:
+        specifier: 5.5.207
+        version: 5.5.207
       pyodide:
         specifier: 314.0.3
         version: 314.0.3
@@ -72,9 +75,6 @@ importers:
       openai:
         specifier: 7.3.0
         version: 7.3.0(ws@8.21.1)
-      pdfjs-dist:
-        specifier: 5.5.207
-        version: 5.5.207
       react:
         specifier: 19.2.8
         version: 19.2.8

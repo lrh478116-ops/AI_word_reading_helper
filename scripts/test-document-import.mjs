@@ -7,6 +7,7 @@ const {
   DEFAULT_SYSTEM_PROMPTS,
   decodeUploadFilename,
   defaultPromptForLanguage,
+  extractPdfStructure,
   hasValidPdfContainer,
   repairImportedDocumentNames,
   resolveSystemPrompt
@@ -42,4 +43,17 @@ if (!hasValidPdfContainer(fixture)) throw new Error("PDF 回归 fixture 容器�
 if (hasValidPdfContainer(Buffer.from("%PDF-1.7\nnot a real PDF", "ascii"))) throw new Error("仅伪造 PDF 文件头的文件被错误接纳");
 if (createHash("sha256").update(fixture).digest("hex") !== "dcd1efb66c75ce0e39c54b3c2e0a383d2fc81333d2df9d41a6242156a8978749") throw new Error("PDF 回归 fixture 被改写");
 
-console.log(JSON.stringify({ filenameUtf8: true, legacyTitleMigration: true, bilingualDefaultPrompt: true, pdfFixtureBytes: fixture.length }));
+const semanticFixtureBase64 = (await readFile(new URL("./fixtures/semantic-pdf.pdf.base64", import.meta.url), "utf8")).replace(/\s+/g, "");
+const semanticFixture = Buffer.from(semanticFixtureBase64, "base64");
+const semantic = await extractPdfStructure("semantic-document", semanticFixture);
+if (semantic.status !== "complete" || semantic.version < 1 || semantic.pageCount !== 2) throw new Error("PDF 结构提取没有产生版本化完成状态");
+const semanticTypes = new Set(semantic.blocks.map((item) => item.type));
+if (!semanticTypes.has("heading") || !semanticTypes.has("paragraph") || !semanticTypes.has("table") || !semanticTypes.has("image")) throw new Error(`PDF 没有分别保留文本、表格和图片结构：${[...semanticTypes].join(",")}`);
+const table = semantic.blocks.find((item) => item.type === "table");
+if (table?.pdf?.detection !== "heuristic" || table.pdf.confidence < 0.75 || table.table?.rows?.length !== 3 || table.table.rows[0]?.length !== 3 || table.table.rows[1]?.[0] !== "准确率") throw new Error("无标签 PDF 表格没有以可审计的几何结构和置信度恢复");
+const image = semantic.blocks.find((item) => item.type === "image");
+if (!image?.pdf?.bbox || image.pdf.page !== 1 || image.pdf.operationIndex == null) throw new Error("PDF 图片没有保留页码、绘制操作和坐标来源");
+if (semantic.blocks.some((item) => item.type === "table" && item.content.includes("两列普通文字"))) throw new Error("普通两列段落被误判为表格");
+if (semantic.blocks.some((item) => item.content.includes("�"))) throw new Error("PDF 语义块含替换字符乱码");
+
+console.log(JSON.stringify({ filenameUtf8: true, legacyTitleMigration: true, bilingualDefaultPrompt: true, pdfFixtureBytes: fixture.length, pdfSemanticBlocks: semantic.blocks.length, pdfSemanticTypes: [...semanticTypes] }));

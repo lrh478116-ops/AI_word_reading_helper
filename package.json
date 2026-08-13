@@ -1,7 +1,7 @@
 {
   "name": "ai-tip-document-app",
   "private": true,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "面向深度阅读的本地 AI 文档与 Tip 对话应用",
   "author": "AI Tip",
   "type": "module",
@@ -13,7 +13,7 @@
     "build": "tsc -b && vite build",
     "start": "tsx server/index.ts",
     "typecheck": "tsc -b --pretty false",
-    "desktop:prepare": "pnpm build && esbuild server/index.ts --bundle --platform=node --format=cjs --target=node20 --external:pyodide --outfile=dist-electron/server.cjs && esbuild server/python-worker.mjs --bundle --platform=node --format=cjs --target=node20 --external:pyodide --outfile=dist-electron/python-worker.cjs",
+    "desktop:prepare": "pnpm build && esbuild server/index.ts --bundle --platform=node --format=cjs --target=node20 --external:pyodide --external:pdfjs-dist/* --outfile=dist-electron/server.cjs && esbuild server/python-worker.mjs --bundle --platform=node --format=cjs --target=node20 --external:pyodide --outfile=dist-electron/python-worker.cjs",
     "desktop:dev": "pnpm desktop:prepare && concurrently -k -n web,desktop -c cyan,green \"vite\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs --dev\"",
     "desktop:start": "pnpm desktop:prepare && electron electron/main.mjs",
     "desktop:smoke": "pnpm desktop:prepare && electron electron/main.mjs --smoke-test",
@@ -23,6 +23,7 @@
     "desktop:dist:mas-dev": "pnpm desktop:prepare && electron-builder --mac mas-dev --universal"
   },
   "dependencies": {
+    "pdfjs-dist": "5.5.207",
     "pyodide": "314.0.3"
   },
   "devDependencies": {
@@ -45,7 +46,6 @@
     "marked": "18.0.7",
     "multer": "2.2.0",
     "openai": "7.3.0",
-    "pdfjs-dist": "5.5.207",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tsx": "4.23.1",

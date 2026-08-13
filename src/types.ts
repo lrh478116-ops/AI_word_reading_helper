@@ -1,4 +1,19 @@
-export type BlockType = "heading" | "paragraph" | "list_item" | "quote" | "code";
+export type BlockType = "heading" | "paragraph" | "list_item" | "quote" | "code" | "table" | "image";
+
+export interface PdfBlockSource {
+  page: number;
+  bbox: [number, number, number, number];
+  textItemIndices?: number[];
+  operationIndex?: number;
+  objectId?: string;
+  detection: "tagged" | "heuristic" | "native-image" | "text";
+  confidence: number;
+}
+
+export interface PdfTableData {
+  rows: string[][];
+  headerRows: number;
+}
 
 export interface DocumentBlock {
   id: string;
@@ -8,6 +23,8 @@ export interface DocumentBlock {
   level?: number;
   order: number;
   contentHash: string;
+  pdf?: PdfBlockSource;
+  table?: PdfTableData;
   createdAt: string;
   updatedAt: string;
 }
@@ -25,6 +42,13 @@ export interface DocumentItem {
   updatedAt: string;
   lastOpenedAt: string;
   tipCount: number;
+  pdfStructure?: {
+    version: number;
+    status: "complete" | "visual-only" | "failed";
+    pageCount: number;
+    extractedAt: string;
+    error?: string;
+  };
 }
 
 export interface TipMessage {

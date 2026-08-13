@@ -13,9 +13,14 @@ import { Worker } from "node:worker_threads";
 import { lookup } from "node:dns/promises";
 import type { AiSettings, AiSettingsInput, ApiProvider, DocumentBlock, DocumentItem, SkillTrace, TipMessage, TipThread, User } from "../src/types.js";
 import { collectTipSubtreeIds, plainMessageContent } from "../src/tip-tree.js";
-import { CORRECTNESS_RULES, DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, normalizePromptLanguage, resolveSystemPrompt } from "../src/prompts.js";
+import { CORRECTNESS_RULES, DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, normalizePromptLanguage, resolveSystemPrompt, type PromptLanguage } from "../src/prompts.js";
+import { PROVIDER_REGISTRY, migrateProviderPreset, providerDefinition } from "../src/providers.js";
+import { PDF_STRUCTURE_VERSION, extractPdfStructure } from "./pdf-structure.js";
+import { normalizeLanguage, translate } from "../src/i18n.js";
 
 export { DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, resolveSystemPrompt } from "../src/prompts.js";
+export { PROVIDER_REGISTRY, migrateProviderPreset } from "../src/providers.js";
+export { PDF_STRUCTURE_VERSION, extractPdfStructure } from "./pdf-structure.js";
 
 const app = express();
 if (existsSync(path.resolve(".env"))) process.loadEnvFile(path.resolve(".env"));
@@ -224,6 +229,25 @@ async function ensureDemoUser() {
     document.originalName = repaired.originalName;
     changed = true;
   }
+  for (const document of db.documents.filter((item) => item.sourceType === "pdf" && item.pdfStructure?.version !== PDF_STRUCTURE_VERSION)) {
+    const sourcePath = document.originalName ? path.join(uploadsDir, document.id, path.basename(document.originalName)) : "";
+    if (!sourcePath || !existsSync(sourcePath)) {
+      document.pdfStructure = { version: PDF_STRUCTURE_VERSION, status: "failed", pageCount: 0, extractedAt: now(), error: "PDF source file is missing" };
+      changed = true;
+      continue;
+    }
+    const structure = await extractPdfStructure(document.id, await readFile(sourcePath));
+    document.pdfStructure = { version: structure.version, status: structure.status, pageCount: structure.pageCount, extractedAt: structure.extractedAt, error: structure.error };
+    if (structure.status !== "failed") document.blocks = structure.blocks;
+    changed = true;
+  }
+  for (let index = 0; index < db.settings.length; index++) {
+    const settings = db.settings[index];
+    const migrated = migrateProviderPreset(settings);
+    if (!migrated.changed) continue;
+    db.settings[index] = { ...settings, baseURL: migrated.baseURL, model: migrated.model };
+    changed = true;
+  }
   const removedIds = new Set(db.documents.filter(isLegacyTransformerSeedDocument).map((document) => document.id));
   if (removedIds.size) {
     db.documents = db.documents.filter((document) => !removedIds.has(document.id));
@@ -333,21 +357,11 @@ app.post("/api/feedback", auth, async (req: AuthedRequest, res) => {
   }
 });
 
-const providerDefaults: Record<ApiProvider, { baseURL: string; model: string }> = {
-  openai: { baseURL: "https://api.openai.com/v1", model: "gpt-5-mini" },
-  deepseek: { baseURL: "https://api.deepseek.com", model: "deepseek-chat" },
-  siliconflow: { baseURL: "https://api.siliconflow.cn/v1", model: "deepseek-ai/DeepSeek-V3" },
-  moonshot: { baseURL: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  zhipu: { baseURL: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-  gemini: { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash" },
-  ollama: { baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
-  custom: { baseURL: "", model: "" }
-};
-
 const defaultPrompt = DEFAULT_SYSTEM_PROMPTS["zh-CN"];
 
 function defaultSettings(userId: string): StoredAiSettings {
-  return { userId, provider: "openai", ...providerDefaults.openai, apiKey: "", systemPrompt: defaultPrompt, webSearchEnabled: false, searchBudgetMode: "free", searchApiKey: "", pythonEnabled: true, reliabilityEnabled: true };
+  const preset = providerDefinition("openai");
+  return { userId, provider: "openai", baseURL: preset.baseURL, model: preset.defaultModel, apiKey: "", systemPrompt: defaultPrompt, webSearchEnabled: false, searchBudgetMode: "free", searchApiKey: "", pythonEnabled: true, reliabilityEnabled: true };
 }
 
 function publicSettings(settings: StoredAiSettings): AiSettings {
@@ -369,11 +383,12 @@ function publicSettings(settings: StoredAiSettings): AiSettings {
   };
 }
 
-function normalizeSettings(userId: string, input: Partial<AiSettingsInput>, previous?: StoredAiSettings): StoredAiSettings {
-  const provider = Object.hasOwn(providerDefaults, input.provider || "") ? input.provider! : (previous?.provider || "openai");
-  const preset = providerDefaults[provider];
+function normalizeSettings(userId: string, input: Partial<AiSettingsInput>, previous?: StoredAiSettings, language: PromptLanguage = "zh-CN"): StoredAiSettings {
+  const t = (key: string) => translate(language, key);
+  const provider = Object.hasOwn(PROVIDER_REGISTRY, input.provider || "") ? input.provider! : (previous?.provider || "openai");
+  const preset = providerDefinition(provider);
   const baseURL = String(input.baseURL ?? previous?.baseURL ?? preset.baseURL).trim().replace(/\/$/, "").slice(0, 500);
-  const model = String(input.model ?? previous?.model ?? preset.model).trim().slice(0, 200);
+  const model = String(input.model ?? previous?.model ?? preset.defaultModel).trim().slice(0, 200);
   const systemPrompt = String(input.systemPrompt ?? previous?.systemPrompt ?? defaultPrompt).trim().slice(0, 12_000) || defaultPrompt;
   const apiKey = input.clearApiKey ? "" : typeof input.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim().slice(0, 1000) : (previous?.apiKey || "");
   const searchApiKey = input.clearSearchApiKey ? "" : typeof input.searchApiKey === "string" && input.searchApiKey.trim() ? input.searchApiKey.trim().slice(0, 1000) : (previous?.searchApiKey || "");
@@ -381,10 +396,10 @@ function normalizeSettings(userId: string, input: Partial<AiSettingsInput>, prev
   const searchBudgetMode = input.searchBudgetMode === "quality" ? "quality" : input.searchBudgetMode === "free" ? "free" : previous?.searchBudgetMode === "quality" ? "quality" : "free";
   const pythonEnabled = typeof input.pythonEnabled === "boolean" ? input.pythonEnabled : previous?.pythonEnabled !== false;
   const reliabilityEnabled = typeof input.reliabilityEnabled === "boolean" ? input.reliabilityEnabled : previous?.reliabilityEnabled !== false;
-  if (!baseURL || !/^https?:\/\//i.test(baseURL)) throw new Error("API 地址必须是有效的 HTTP(S) 地址");
+  if (!baseURL || !/^https?:\/\//i.test(baseURL)) throw new Error(t("settings.error.invalidUrl"));
   const parsedURL = new URL(baseURL);
-  if (parsedURL.protocol !== "https:" && !["localhost", "127.0.0.1", "::1"].includes(parsedURL.hostname)) throw new Error("为保护 API Key，远程接口必须使用 HTTPS");
-  if (!model) throw new Error("请填写模型名称");
+  if (parsedURL.protocol !== "https:" && !["localhost", "127.0.0.1", "::1"].includes(parsedURL.hostname)) throw new Error(t("settings.error.httpsRequired"));
+  if (!model) throw new Error(t("settings.error.modelRequired"));
   return { userId, provider, baseURL, model, apiKey, systemPrompt, webSearchEnabled, searchBudgetMode, searchApiKey, pythonEnabled, reliabilityEnabled };
 }
 
@@ -397,41 +412,63 @@ app.get("/api/settings", auth, async (req: AuthedRequest, res) => {
 app.put("/api/settings", auth, async (req: AuthedRequest, res) => {
   const db = await readDb();
   const index = db.settings.findIndex((item) => item.userId === req.user!.id);
+  const language = normalizeLanguage(req.body?.language);
+  const t = (key: string) => translate(language, key);
   try {
-    const settings = normalizeSettings(req.user!.id, req.body as Partial<AiSettingsInput>, index >= 0 ? db.settings[index] : undefined);
+    const settings = normalizeSettings(req.user!.id, req.body as Partial<AiSettingsInput>, index >= 0 ? db.settings[index] : undefined, language);
     if (index >= 0) db.settings[index] = settings; else db.settings.push(settings);
     await writeDb(db);
     res.json({ settings: publicSettings(settings) });
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "设置无效" });
+    res.status(400).json({ error: error instanceof Error ? error.message : t("settings.error.invalidSettings") });
   }
 });
 
 app.post("/api/settings/test", auth, async (req: AuthedRequest, res) => {
   const db = await readDb();
   const previous = db.settings.find((item) => item.userId === req.user!.id);
+  const language = normalizeLanguage(req.body?.language);
+  const t = (key: string, variables: Record<string, string | number> = {}) => translate(language, key, variables);
   try {
-    const settings = normalizeSettings(req.user!.id, req.body as Partial<AiSettingsInput>, previous);
-    if (!settings.apiKey && settings.provider !== "ollama") return res.status(400).json({ error: "请先填写 API Key" });
+    const settings = normalizeSettings(req.user!.id, req.body as Partial<AiSettingsInput>, previous, language);
+    if (!settings.apiKey && settings.provider !== "ollama") return res.status(400).json({ error: t("settings.error.apiKeyRequired") });
     const client = new OpenAI({ apiKey: settings.apiKey || "ollama-local", baseURL: settings.baseURL });
     await client.chat.completions.create({
       model: settings.model,
-      messages: [{ role: "user", content: "请只回复 OK" }]
+      messages: [{ role: "user", content: language === "en" ? "Reply with OK only." : "请只回复 OK" }]
     });
-    const checked = [`AI 模型 ${settings.model}`];
+    const checked = [t("settings.test.model", { model: settings.model })];
     if (settings.webSearchEnabled) {
-      if (!settings.searchApiKey) return res.status(400).json({ error: "已启用联网搜索，但尚未填写 Tavily API Key" });
+      if (!settings.searchApiKey) return res.status(400).json({ error: t("settings.error.searchKeyRequired") });
       const usage = await getTavilyUsage(settings.searchApiKey);
-      checked.push(`联网搜索（剩余约 ${usage.remaining}/${usage.limit} 额度）`);
+      checked.push(t("settings.test.search", { remaining: usage.remaining, limit: usage.limit }));
     }
     if (settings.pythonEnabled) {
       const result = await runPythonCalculation("decimal.Decimal('0.1') + decimal.Decimal('0.2')");
-      if (!result.includes("0.3")) throw new Error("Python 精度自检未通过");
-      checked.push("Python 精确计算");
+      if (!result.includes("0.3")) throw new Error(t("settings.error.pythonFailed"));
+      checked.push(t("settings.test.python"));
     }
-    res.json({ ok: true, message: `${checked.join("、")}均可用` });
+    res.json({ ok: true, message: t("settings.test.success", { checks: checked.join(language === "en" ? ", " : "、") }) });
   } catch (error) {
-    res.status(400).json({ error: `连接失败：${error instanceof Error ? error.message : "未知错误"}` });
+    res.status(400).json({ error: t("settings.error.connection", { error: error instanceof Error ? error.message : t("settings.failed") }) });
+  }
+});
+
+app.post("/api/settings/models", auth, async (req: AuthedRequest, res) => {
+  const db = await readDb();
+  const previous = db.settings.find((item) => item.userId === req.user!.id);
+  const language = normalizeLanguage(req.body?.language);
+  const t = (key: string, variables: Record<string, string | number> = {}) => translate(language, key, variables);
+  try {
+    const settings = normalizeSettings(req.user!.id, req.body as Partial<AiSettingsInput>, previous, language);
+    if (!settings.apiKey && settings.provider !== "ollama") return res.status(400).json({ error: t("settings.error.apiKeyRequired") });
+    const client = new OpenAI({ apiKey: settings.apiKey || "ollama-local", baseURL: settings.baseURL });
+    const page = await client.models.list();
+    const models = [...new Set(page.data.map((item) => String(item.id || "").trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+    if (!models.length) return res.status(502).json({ error: t("settings.error.emptyModels") });
+    res.json({ models, fetchedAt: now(), provider: settings.provider });
+  } catch (error) {
+    res.status(502).json({ error: t("settings.error.modelsFailed", { error: error instanceof Error ? error.message.slice(0, 240) : t("settings.failed") }) });
   }
 });
 
@@ -638,10 +675,13 @@ app.post("/api/documents/import", auth, upload.single("file"), async (req: Authe
   const id = makeId();
   const timestamp = now();
   let blocks: DocumentBlock[];
+  let pdfStructure: DocumentItem["pdfStructure"];
   try {
     if (ext === ".pdf") {
       if (!hasValidPdfContainer(req.file.buffer)) return res.status(422).json({ error: "PDF 文件签名无效，请选择真实的 PDF 文件" });
-      blocks = [];
+      const structure = await extractPdfStructure(id, req.file.buffer);
+      blocks = structure.blocks;
+      pdfStructure = { version: structure.version, status: structure.status, pageCount: structure.pageCount, extractedAt: structure.extractedAt, error: structure.error };
     } else if (ext === ".docx") {
       const converted = await mammoth.convertToHtml({ buffer: req.file.buffer });
       blocks = htmlToBlocks(id, converted.value);
@@ -658,7 +698,7 @@ app.post("/api/documents/import", auth, upload.single("file"), async (req: Authe
   }
   const document: DocumentItem = {
     id, userId: req.user!.id, title: path.basename(safeOriginalName, ext), sourceType: ext === ".txt" ? "txt" : ext === ".docx" ? "docx" : ext === ".pdf" ? "pdf" : "markdown",
-    originalName: safeOriginalName, favorite: false, status: "active", blocks,
+    originalName: safeOriginalName, favorite: false, status: "active", blocks, pdfStructure,
     createdAt: timestamp, updatedAt: timestamp, lastOpenedAt: timestamp, tipCount: 0
   };
   const db = await readDb();

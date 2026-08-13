@@ -12,6 +12,7 @@ let localURL = null;
 let pythonCalculation = null;
 let pythonWorkerTest = null;
 let smokeDataDir = null;
+const smokeResultPath = process.env.AI_TIP_SMOKE_RESULT_PATH ? path.resolve(process.env.AI_TIP_SMOKE_RESULT_PATH) : "";
 
 async function bootServer() {
   if (localURL) return localURL;
@@ -81,7 +82,7 @@ async function createWindow() {
     const snapshot = await mainWindow.webContents.executeJavaScript("({ title: document.title, url: location.href, text: document.body.innerText.slice(0, 300) })");
     if (snapshot.title === "Error" || !snapshot.text.includes("AI Tip")) throw new Error(`桌面页面加载异常：${JSON.stringify(snapshot)}`);
     const externalPdfFixturePath = process.env.AI_TIP_PDF_FIXTURE_PATH ? path.resolve(process.env.AI_TIP_PDF_FIXTURE_PATH) : "";
-    const pdfFixturePath = externalPdfFixturePath || path.join(appRoot, "scripts", "fixtures", "chinese-image.pdf.base64");
+    const pdfFixturePath = externalPdfFixturePath || path.join(appRoot, "scripts", "fixtures", "semantic-pdf.pdf.base64");
     const pdfFixtureBase64 = existsSync(pdfFixturePath) ? readFileSync(pdfFixturePath, "utf8").replace(/\s+/g, "") : "";
     const productBehavior = await mainWindow.webContents.executeJavaScript(`(async () => {
       const pdfFixtureBase64 = ${JSON.stringify(pdfFixtureBase64)};
@@ -141,6 +142,8 @@ async function createWindow() {
       if (settingsLanguage.value !== 'en') throw new Error('设置与登录页没有共享语言状态');
       const defaultPromptArea = document.querySelector('.settings-body > label textarea[rows="8"]');
       if (!defaultPromptArea?.value?.startsWith('You are') || /[\u3400-\u9fff]/u.test(defaultPromptArea.value)) throw new Error('英文设置仍显示中文内置 Prompt');
+      const providerLabels = [...document.querySelectorAll('.settings-grid select option')].map(option => option.textContent || '');
+      if (providerLabels.length !== 8 || providerLabels.some(label => /[\u3400-\u9fff]/u.test(label))) throw new Error('英文接口服务商列表仍含中文或条目缺失：' + providerLabels.join(','));
       if (!document.querySelector('.feedback-box') || document.body.innerText.includes('@qq.com')) throw new Error('建议箱缺失或收件地址暴露在界面中');
       const feedbackText = 'This suggestion must remain visible when the email relay is not configured.';
       const feedbackArea = document.querySelector('.feedback-box textarea');
@@ -171,8 +174,14 @@ async function createWindow() {
         fileInput.dispatchEvent(new Event('change', { bubbles: true }));
         await waitFor('[data-pdf-document]');
         if (document.querySelector('.document-title')?.value !== '中文图片资料') throw new Error('Electron 文件输入没有保留中文 PDF 标题');
+        const semanticText = await waitFor('[data-pdf-semantic-block] p');
+        const semanticTable = await waitFor('[data-pdf-table-block]');
+        const semanticImage = await waitUntil(() => document.querySelector('[data-pdf-image-block]')?.naturalWidth > 100 ? document.querySelector('[data-pdf-image-block]') : null, 'PDF 独立图片对象');
+        if (!semanticText.textContent.includes('可选择') || semanticTable.querySelectorAll('tr').length !== 3 || semanticImage.tagName !== 'IMG') throw new Error('PDF 结构化视图没有分别保留文本、表格和图片');
+        document.querySelector('.pdf-view-switch button:last-child').click();
         const pages = await waitUntil(() => document.querySelectorAll('[data-pdf-page]').length === 2 ? [...document.querySelectorAll('[data-pdf-page]')] : null, 'PDF 两页结构');
         const firstCanvas = await waitUntil(() => pages[0].classList.contains('rendered') && pages[0].querySelector('canvas')?.width > 500 ? pages[0].querySelector('canvas') : null, 'PDF 第一页 Canvas');
+        if (pages[0].querySelectorAll('.pdf-text-layer span').length < 5) throw new Error('PDF 原始版式没有叠加真实可选择 TextLayer');
         const pixels = firstCanvas.getContext('2d').getImageData(0, 0, firstCanvas.width, firstCanvas.height).data;
         let coloredPixels = 0;
         for (let index = 0; index < pixels.length; index += 64) {
@@ -279,7 +288,9 @@ async function createWindow() {
     const persisted = readFileSync(path.join(smokeDataDir, "store.json"), "utf8");
     if (persisted.includes("desktop-smoke-secret") || !persisted.includes("safe:v1:")) throw new Error("系统密钥存储自检失败");
     rmSync(smokeDataDir, { recursive: true, force: true }); smokeDataDir = null;
-    console.log(`Desktop smoke test passed: ${snapshot.title}; ${JSON.stringify(productBehavior)}; ${pythonResult}; advanced worker and safeStorage ok`);
+    const smokeResult = `Desktop smoke test passed: ${snapshot.title}; ${JSON.stringify(productBehavior)}; ${pythonResult}; advanced worker and safeStorage ok`;
+    if (smokeResultPath) writeFileSync(smokeResultPath, JSON.stringify({ ok: true, result: smokeResult }), "utf8");
+    console.log(smokeResult);
     app.quit();
   }
 }
@@ -289,6 +300,9 @@ app.whenReady().then(async () => {
   await createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
 }).catch((error) => {
+  if (smokeResultPath) {
+    try { writeFileSync(smokeResultPath, JSON.stringify({ ok: false, error: error instanceof Error ? error.stack || error.message : String(error) }), "utf8"); } catch {}
+  }
   console.error(error);
   app.exit(1);
 });

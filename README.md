@@ -94,8 +94,9 @@ AI_TIP_FEEDBACK_RELAY_TOKEN=your-relay-token
 - 注册、登录、JWT 鉴权和用户数据隔离
 - 新建、搜索、排序、收藏、回收站、恢复和永久删除
 - TXT、Markdown、DOCX、PDF 导入，10MB 大小限制并保留原始文件；中文、重音字符和 Emoji 文件名在 multipart 边界恢复为 UTF-8
-- PDF 由 PDF.js 从鉴权读取的原始字节按视口延迟渲染；嵌入字体、矢量和图片不经过 OCR 或 JPEG/WebP 二次编码，CMap、标准字体、ICC 与 WASM 资产随桌面安装包离线分发
-- 统一块模型：标题、段落、列表、引用和代码
+- PDF 原始版式由 PDF.js Canvas + TextLayer 从鉴权读取的原始字节渲染；原文件逐字节保留，不经过 OCR 或 JPEG/WebP 二次编码
+- PDF 结构化视图把可映射文字、满足严格几何条件的表格和原生图片绘制操作分别持久化为真实文本、`<table>` 与 `<img>`；表格显示推断置信度，扫描件不虚构文字
+- 统一块模型：标题、段落、列表、引用、代码、PDF 表格和 PDF 图片
 - 块级 `contentEditable` 编辑、900ms 防抖自动保存、手动保存和状态反馈
 - 文字选区浮动工具条与 Tip 创建
 - Tip 独立多轮历史、流式输出、停止生成、复制、折叠、恢复、解决和删除
@@ -104,7 +105,7 @@ AI_TIP_FEEDBACK_RELAY_TOKEN=your-relay-token
 - 进入子 Tip 时，父聊天替换原文档区域，子聊天替换原 Tip 区域；逐层收回时按父链确定性恢复原位置
 - 存在两级 Tip 后显示左上角 Tip 树，支持按层级定位对话、编辑节点名称以及父节点删除时级联清理后代
 - 通俗解释、详细解释、专业解释和举例四种快捷提问
-- 多服务商 API、模型、自定义兼容地址、连接测试与系统 Prompt 设置
+- 中英双语的共享 API 服务商注册表、当前默认模型、自定义兼容地址、真实 `/models` 刷新、连接测试与系统 Prompt 设置
 - Tavily 联网搜索、来源展示与 Pyodide/WASM 精确计算技能
 - 专业问题分级、强制权威来源搜索、缓冲式引用审查与失败阻断
 - 设置内修改建议箱与隐藏收件人的 HTTPS 邮件中继
@@ -119,12 +120,14 @@ AI_TIP_FEEDBACK_RELAY_TOKEN=your-relay-token
 src/
   App.tsx        前端页面与核心交互
   api.ts         鉴权、文档、Tip 与流式请求封装
-  PdfPreview.tsx PDF.js 原页面渲染与按视口加载
+  PdfPreview.tsx PDF.js 原始版式与 PDF 语义结构视图
+  providers.ts   共享服务商 URL、默认模型与迁移注册表
   prompts.ts     中英文内置 Prompt 与准确性规则
   types.ts       统一文档块和 Tip 数据模型
   styles.css     桌面/移动端视觉系统
 server/
   index.ts       Express API、持久化、导入解析、锚点恢复与 AI
+  pdf-structure.ts PDF 文本行、几何表格和图片绘制操作提取
 ```
 
 ## 验证命令

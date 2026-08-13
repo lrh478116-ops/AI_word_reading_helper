@@ -34,10 +34,12 @@ export const api = {
     }),
   me: () => request<{ user: User }>("/auth/me"),
   settings: () => request<{ settings: AiSettings }>("/settings"),
-  updateSettings: (settings: AiSettingsInput) =>
-    request<{ settings: AiSettings }>("/settings", { method: "PUT", body: JSON.stringify(settings) }),
-  testSettings: (settings: AiSettingsInput) =>
-    request<{ ok: boolean; message: string }>("/settings/test", { method: "POST", body: JSON.stringify(settings) }),
+  updateSettings: (settings: AiSettingsInput, language: PromptLanguage) =>
+    request<{ settings: AiSettings }>("/settings", { method: "PUT", body: JSON.stringify({ ...settings, language }) }),
+  testSettings: (settings: AiSettingsInput, language: PromptLanguage) =>
+    request<{ ok: boolean; message: string }>("/settings/test", { method: "POST", body: JSON.stringify({ ...settings, language }) }),
+  listModels: (settings: AiSettingsInput, language: PromptLanguage) =>
+    request<{ models: string[]; fetchedAt: string; provider: string }>("/settings/models", { method: "POST", body: JSON.stringify({ ...settings, language }) }),
   submitFeedback: (category: "feature" | "accuracy" | "bug" | "usability" | "other", message: string) =>
     request<{ ok: boolean; message: string }>("/feedback", { method: "POST", body: JSON.stringify({ category, message }) }),
   documents: (status = "active") => request<{ documents: DocumentItem[] }>(`/documents?status=${status}`),

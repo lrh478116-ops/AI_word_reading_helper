@@ -10,6 +10,7 @@ import { api, session } from "./api";
 import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type Language } from "./i18n";
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
+import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
 import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import { buildTipForest, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
 
@@ -107,17 +108,6 @@ function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
   );
 }
 
-const providerOptions: Array<{ value: ApiProvider; label: string; baseURL: string; model: string }> = [
-  { value: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", model: "gpt-5-mini" },
-  { value: "deepseek", label: "DeepSeek", baseURL: "https://api.deepseek.com", model: "deepseek-chat" },
-  { value: "siliconflow", label: "硅基流动", baseURL: "https://api.siliconflow.cn/v1", model: "deepseek-ai/DeepSeek-V3" },
-  { value: "moonshot", label: "Moonshot", baseURL: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  { value: "zhipu", label: "智谱 AI", baseURL: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-  { value: "gemini", label: "Google Gemini（兼容接口）", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash" },
-  { value: "ollama", label: "Ollama 本地模型", baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b" },
-  { value: "custom", label: "OpenAI 兼容接口", baseURL: "", model: "" }
-];
-
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const { language, t } = useI18n();
   const languageRef = useRef(language);
@@ -130,6 +120,9 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelsBusy, setModelsBusy] = useState(false);
+  const providerOptions = Object.values(PROVIDER_REGISTRY);
 
   useEffect(() => {
     languageRef.current = language;
@@ -151,23 +144,33 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   }, [language]);
 
   const changeProvider = (provider: ApiProvider) => {
-    const preset = providerOptions.find((item) => item.value === provider)!;
-    setDraft((current) => ({ ...current, provider, baseURL: preset.baseURL, model: preset.model }));
+    const preset = providerDefinition(provider);
+    setAvailableModels([]);
+    setDraft((current) => ({ ...current, provider, baseURL: preset.baseURL, model: preset.defaultModel }));
   };
   const run = async (action: "save" | "test") => {
     setBusy(action); setMessage(null);
     try {
       if (action === "test") {
-        const result = await api.testSettings(draft);
+        const result = await api.testSettings(draft, language);
         setMessage({ kind: "ok", text: result.message });
       } else {
-        const result = await api.updateSettings(draft);
+        const result = await api.updateSettings(draft, language);
         setSaved(result.settings);
         setDraft((current) => ({ ...current, apiKey: "", clearApiKey: false, searchApiKey: "", clearSearchApiKey: false }));
         setMessage({ kind: "ok", text: t("settings.saved") });
       }
     } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : t("settings.failed") }); }
     finally { setBusy(""); }
+  };
+  const refreshModels = async () => {
+    setModelsBusy(true); setMessage(null);
+    try {
+      const result = await api.listModels(draft, language);
+      setAvailableModels(result.models);
+      setMessage({ kind: "ok", text: t("settings.modelsUpdated", { count: result.models.length }) });
+    } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : t("settings.failed") }); }
+    finally { setModelsBusy(false); }
   };
   const submitFeedback = async () => {
     if (feedbackText.trim().length < 10 || feedbackBusy) return;
@@ -187,9 +190,10 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
       {loading ? <div className="settings-loading"><LoaderCircle className="spin" size={20} />{t("settings.loading")}</div> : <div className="settings-body">
         <LanguageSelect />
         <div className="settings-grid">
-          <label>{t("settings.provider")}<select value={draft.provider} onChange={(event) => changeProvider(event.target.value as ApiProvider)}>{providerOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-          <label>{t("settings.model")}<input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="gpt-5-mini" /></label>
+          <label>{t("settings.provider")}<select value={draft.provider} onChange={(event) => changeProvider(event.target.value as ApiProvider)}>{providerOptions.map((item) => <option key={item.id} value={item.id}>{t(item.labelKey)}</option>)}</select></label>
+          <label>{t("settings.model")}<input list="provider-models" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder={providerDefinition(draft.provider).defaultModel} /><datalist id="provider-models">{availableModels.map((model) => <option key={model} value={model} />)}</datalist></label>
         </div>
+        <div className="model-refresh-row"><button type="button" className="secondary compact" onClick={() => void refreshModels()} disabled={modelsBusy}>{modelsBusy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{modelsBusy ? t("settings.refreshingModels") : t("settings.refreshModels")}</button><small>{t("settings.modelsHint")} · {t("settings.registryDate", { date: PROVIDER_REGISTRY_VERIFIED_AT })}</small></div>
         <label>{t("settings.apiUrl")}<input value={draft.baseURL} onChange={(event) => setDraft({ ...draft, baseURL: event.target.value })} placeholder="https://api.example.com/v1" /></label>
         <label>{t("settings.apiKey")}<input type="password" value={draft.apiKey || ""} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value, clearApiKey: false })} placeholder={saved?.apiKeyConfigured ? t("settings.savedKey", { mask: saved.apiKeyMasked }) : t("settings.enterKey")} /></label>
         {saved?.apiKeyConfigured && <label className="clear-key"><input type="checkbox" checked={Boolean(draft.clearApiKey)} onChange={(event) => setDraft({ ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey })} />{t("settings.removeKey")}</label>}
@@ -701,7 +705,7 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
             <div className="page-meta"><span>{documentItem.sourceType === "blank" ? t("editor.personalNote") : t("editor.imported", { type: documentItem.sourceType.toUpperCase() })}</span><span>{t("editor.lastEdited", { time: timeAgo(documentItem.updatedAt, language, t) })}</span></div>
             <input className="document-title" value={documentItem.title} onChange={(e) => updateTitle(e.target.value)} placeholder={t("editor.untitled")} />
             <div className="document-rule" />
-            {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }) }} /> : <>
+            {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} blocks={documentItem.blocks} structure={documentItem.pdfStructure} tipsByBlock={tipsByBlock} onSelection={setSelection} onOpenTip={openTip} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), structured: t("pdf.structured"), original: t("pdf.original"), structureHint: t("pdf.structureHint"), tableHeuristic: (confidence) => t("pdf.tableHeuristic", { confidence }), imageAlt: (page) => t("pdf.imageAlt", { page }), structureFailed: (error) => t("pdf.structureFailed", { error }), visualOnly: t("pdf.visualOnly"), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }) }} /> : <>
               <div className="blocks">
                 {documentItem.blocks.map((item) => <EditableBlock key={item.id} item={item} tips={tipsByBlock[item.id] || []} onChange={updateBlock} onSelection={setSelection} onOpenTip={openTip} />)}
               </div>
