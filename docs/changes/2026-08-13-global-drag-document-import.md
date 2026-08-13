@@ -71,3 +71,4 @@
 - 两次连续源代码态桌面 smoke 均在设置弹窗上完成正式拖放：先注入 PATCH 失败并证明导入未调用，再恢复后验证 `PATCH:done` 早于 `IMPORT:start`、旧文档标题/正文由 API 读回一致、新 Markdown 按服务端返回 ID 自动打开、设置弹窗关闭。
 - 同一 smoke 证明 `.exe` drop 被 `preventDefault` 且文档数不变；完整集成回归继续验证 TXT、Markdown、DOCX、PDF 解析、PDF 原字节保留和超过 10MB 上传。
 - Windows `1.9.3` 解包发布产物再次执行同一正式 UI 流程，返回 `emptyImportDefault/globalDropImport/unsupportedDropBlocked/saveFailureBlocked/saveBeforeDropUpload = true`，同时保留 PDF、OCR、递归 Tip、Python 与系统密钥存储回归。因此 Windows 发布路径达到 `LEVEL_5_PREDICTION_BEARING`；macOS 仍标记为待真机商店包验证。
+- 另在独立、空白的 1.9.3 打包态用户目录中执行五格式拖放矩阵：依次从文档库/编辑器拖入 `matrix.txt`、`matrix.md`、`matrix.markdown`、真实 DOCX 和真实 PDF。五次 drop 均取消默认导航、分别创建 `txt/markdown/markdown/docx/pdf` 类型、使用五个不同的服务端返回 ID 自动打开。该证据补足“所有支持种类”在拖放正式路径中的独立评估。
