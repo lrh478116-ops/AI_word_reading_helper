@@ -39,8 +39,18 @@ function offsetWithin(root: Node, node: Node, offset: number) {
   const range = document.createRange(); range.selectNodeContents(root); range.setEnd(node, offset); return range.toString().length;
 }
 
+function syncOcrTextLayer(layer: HTMLDivElement, viewport: any, pageSource?: PdfPageSource) {
+  layer.querySelectorAll(".pdf-ocr-word").forEach((node) => node.remove());
+  if (pageSource?.source !== "ocr") return;
+  for (const item of pageSource.items) {
+    const rectangle = viewport.convertToViewportRectangle(item.bbox); const left = Math.min(rectangle[0], rectangle[2]); const top = Math.min(rectangle[1], rectangle[3]); const wordWidth = Math.abs(rectangle[2] - rectangle[0]); const wordHeight = Math.abs(rectangle[3] - rectangle[1]);
+    const span = document.createElement("span"); span.className = "pdf-ocr-word"; span.textContent = item.text; span.style.left = `${left}px`; span.style.top = `${top}px`; span.style.width = `${wordWidth}px`; span.style.height = `${wordHeight}px`; span.style.fontSize = `${Math.max(5, wordHeight)}px`; layer.append(span);
+  }
+}
+
 function PdfPageCanvas({ pdf, documentId, fingerprint, pageNumber, pageSource, tips, labels, onSelection, onOpenTip, onOcrSaved }: { pdf: PDFDocumentProxy; documentId: string; fingerprint: string; pageNumber: number; pageSource?: PdfPageSource; tips: TipThread[]; labels: PdfLabels; onSelection: (selection: PdfSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; onOcrSaved: (page: PdfPageSource) => void }) {
   const shellRef = useRef<HTMLDivElement>(null); const canvasRef = useRef<HTMLCanvasElement>(null); const textLayerRef = useRef<HTMLDivElement>(null);
+  const pageSourceRef = useRef(pageSource); pageSourceRef.current = pageSource;
   const viewportRef = useRef<any>(null); const [overlayVersion, setOverlayVersion] = useState(0);
   const [nearViewport, setNearViewport] = useState(pageNumber === 1); const [width, setWidth] = useState(0);
   const [state, setState] = useState<"waiting" | "rendering" | "rendered" | "error">("waiting");
@@ -57,7 +67,9 @@ function PdfPageCanvas({ pdf, documentId, fingerprint, pageNumber, pageSource, t
   useEffect(() => {
     if (!nearViewport || !width || !canvasRef.current || !textLayerRef.current) return;
     let cancelled = false; let renderTask: RenderTask | null = null; let textLayer: InstanceType<(typeof import("pdfjs-dist"))["TextLayer"]> | null = null;
-    setState("rendering");
+    // A width change may repaint an existing page, but it must not demote a
+    // visible Canvas to the first-load skeleton and collapse the scroll layout.
+    setState((current) => current === "rendered" ? current : "rendering");
     void (async () => {
       try {
         const [page, pdfjs] = await Promise.all([pdf.getPage(pageNumber), loadPdfJs()]);
@@ -71,17 +83,20 @@ function PdfPageCanvas({ pdf, documentId, fingerprint, pageNumber, pageSource, t
         if (cancelled) return;
         const layer = textLayerRef.current; layer.replaceChildren(); layer.style.width = `${Math.floor(viewport.width)}px`; layer.style.height = `${Math.floor(viewport.height)}px`; layer.style.setProperty("--total-scale-factor", String(viewport.scale));
         textLayer = new pdfjs.TextLayer({ textContentSource: textContent, container: layer, viewport }); await textLayer.render();
-        if (pageSource?.source === "ocr") {
-          for (const item of pageSource.items) {
-            const rectangle = viewport.convertToViewportRectangle(item.bbox); const left = Math.min(rectangle[0], rectangle[2]); const top = Math.min(rectangle[1], rectangle[3]); const wordWidth = Math.abs(rectangle[2] - rectangle[0]); const wordHeight = Math.abs(rectangle[3] - rectangle[1]);
-            const span = document.createElement("span"); span.className = "pdf-ocr-word"; span.textContent = item.text; span.style.left = `${left}px`; span.style.top = `${top}px`; span.style.width = `${wordWidth}px`; span.style.height = `${wordHeight}px`; span.style.fontSize = `${Math.max(5, wordHeight)}px`; layer.append(span);
-          }
-        }
+        syncOcrTextLayer(layer, viewport, pageSourceRef.current);
         if (!cancelled) { setState("rendered"); setOverlayVersion((value) => value + 1); }
-      } catch (error) { if (!cancelled && (error as { name?: string }).name !== "RenderingCancelledException") setState("error"); }
+      } catch (error) { if (!cancelled && (error as { name?: string }).name !== "RenderingCancelledException") setState((current) => current === "rendered" ? current : "error"); }
     })();
     return () => { cancelled = true; renderTask?.cancel(); textLayer?.cancel(); };
-  }, [nearViewport, pageNumber, pageSource, pdf, width]);
+  }, [nearViewport, pageNumber, pdf, width]);
+
+  // OCR persistence only changes the transparent selectable text layer. It
+  // must not rerender or hide the already painted PDF Canvas.
+  useEffect(() => {
+    const layer = textLayerRef.current; const viewport = viewportRef.current;
+    if (state !== "rendered" || !layer || !viewport) return;
+    syncOcrTextLayer(layer, viewport, pageSource);
+  }, [pageSource, state]);
 
   const runOcr = async () => {
     const canvas = canvasRef.current; const viewport = viewportRef.current; if (!canvas || !viewport || !pageSource || ocrBusy) return;

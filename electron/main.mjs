@@ -167,6 +167,7 @@ async function createWindow() {
       if (localStorage.getItem('ai-tip-language') !== 'zh-CN') throw new Error('设置页语言选择没有持久化');
       document.querySelector('.settings-modal > header .icon-button').click();
       let pdfVisual = false;
+      let ocrLayoutMaxDelta = 0;
       let pdfCanvasDataUrl = '';
       let pdfSecondCanvasDataUrl = '';
       if (pdfFixtureBase64) {
@@ -236,14 +237,40 @@ async function createWindow() {
           await waitUntil(() => ocrPage.querySelectorAll('.pdf-ocr-word').length >= 3 && ocrPage.querySelector('header small'), 'offline OCR word layer', 120000);
           const ocrWord = await waitUntil(() => [...ocrPage.querySelectorAll('.pdf-ocr-word')].find(element => /OCR/i.test(element.textContent || '')), 'OCR selectable word');
           selectText(ocrWord, 0, Math.min(3, ocrWord.textContent.trim().length));
-          (await waitFor('.selection-toolbar button')).click();
-          const ocrTipPanel = await waitFor('[data-tip-panel]');
+          (await waitUntil(() => document.querySelector('.selection-toolbar button'), 'first-page OCR selection toolbar')).click();
+          const ocrTipPanel = await waitUntil(() => document.querySelector('[data-tip-panel]'), 'first-page OCR Tip panel');
           const ocrTipId = ocrTipPanel.getAttribute('data-tip-panel');
           const persistedOcr = await fetch('/api/documents/' + ocrDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
           const persistedOcrTip = persistedOcr.tips.find(tip => tip.id === ocrTipId);
           if (persistedOcr.document.pdfStructure?.pages?.[0]?.source !== 'ocr' || persistedOcrTip?.anchorType !== 'pdf' || persistedOcrTip?.pdfAnchor?.source !== 'ocr' || !(persistedOcrTip?.pdfAnchor?.confidence > 0)) throw new Error('offline OCR output did not become a persisted PDF Tip authority');
+          const scannedPages = [...document.querySelectorAll('[data-pdf-page]')];
+          if (scannedPages.length !== 4) throw new Error('OCR layout regression requires a four-page scanned PDF');
+          const layoutPage = scannedPages[2];
+          layoutPage.scrollIntoView({ block: 'center' });
+          await waitUntil(() => layoutPage.classList.contains('rendered') && layoutPage.querySelector('header button'), 'middle scanned PDF page');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const editorScroll = document.querySelector('.editor-scroll'); const editorNav = document.querySelector('.editor-nav');
+          const sampleLayout = () => ({ pageHeight: layoutPage.getBoundingClientRect().height, scrollTop: editorScroll.scrollTop, navTop: editorNav.getBoundingClientRect().top, navBottom: editorNav.getBoundingClientRect().bottom, tipTop: ocrTipPanel.getBoundingClientRect().top, tipBottom: ocrTipPanel.getBoundingClientRect().bottom });
+          const initialLayout = sampleLayout(); const layoutSamples = [initialLayout];
+          const layoutTimer = setInterval(() => layoutSamples.push(sampleLayout()), 8);
+          layoutPage.querySelector('header button').click();
+          await waitUntil(() => layoutPage.querySelectorAll('.pdf-ocr-word').length >= 3 && layoutPage.querySelector('header small'), 'middle-page OCR word layer', 120000);
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          layoutSamples.push(sampleLayout()); clearInterval(layoutTimer);
+          const maximumLayoutDelta = layoutSamples.reduce((result, sample) => Math.max(result, Math.abs(sample.pageHeight - initialLayout.pageHeight), Math.abs(sample.scrollTop - initialLayout.scrollTop), Math.abs(sample.navTop - initialLayout.navTop), Math.abs(sample.navBottom - initialLayout.navBottom), Math.abs(sample.tipTop - initialLayout.tipTop), Math.abs(sample.tipBottom - initialLayout.tipBottom)), 0);
+          ocrLayoutMaxDelta = maximumLayoutDelta;
+          if (maximumLayoutDelta > 2) throw new Error('OCR changed page height, scroll position, or three-column geometry by ' + maximumLayoutDelta + 'px');
           ocrTipPanel.querySelector('.tip-head .icon-button').click();
-          await waitUntil(() => !document.querySelector('[data-tip-panel]') && document.querySelector('.pdf-page-tip'), 'OCR Tip overlay');
+          await waitUntil(() => !document.querySelector('[data-tip-panel]') && document.querySelector('.pdf-page-tip'), 'first OCR Tip overlay');
+          const middleOcrWord = await waitUntil(() => [...layoutPage.querySelectorAll('.pdf-ocr-word')].find(element => /OCR/i.test(element.textContent || '')), 'middle-page OCR selectable word');
+          selectText(middleOcrWord, 0, Math.min(3, middleOcrWord.textContent.trim().length));
+          (await waitUntil(() => document.querySelector('.selection-toolbar button'), 'middle-page OCR selection toolbar')).click();
+          const middleOcrTipPanel = await waitUntil(() => document.querySelector('[data-tip-panel]'), 'middle-page OCR Tip panel');
+          const verifiedLayoutOcr = await fetch('/api/documents/' + ocrDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+          const middleOcrTip = verifiedLayoutOcr.tips.find(tip => tip.id === middleOcrTipPanel.getAttribute('data-tip-panel'));
+          if (verifiedLayoutOcr.document.pdfStructure?.pages?.[2]?.source !== 'ocr' || middleOcrTip?.pdfAnchor?.pageNumber !== 3 || middleOcrTip?.pdfAnchor?.source !== 'ocr') throw new Error('layout-stable OCR result did not continue into the formal PDF Tip path');
+          middleOcrTipPanel.querySelector('.tip-head .icon-button').click();
+          await waitUntil(() => !document.querySelector('[data-tip-panel]'), 'middle-page OCR Tip collapse');
           document.querySelector('.back-button').click();
           await waitFor('.app-nav');
         }
@@ -310,7 +337,7 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, offlineOcr: true, ocrTipAuthority: true, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
     })()`);
     if (process.env.AI_TIP_PDF_SCREENSHOT_PATH && productBehavior.pdfCanvasDataUrl) {
       const png = String(productBehavior.pdfCanvasDataUrl).replace(/^data:image\/png;base64,/, "");

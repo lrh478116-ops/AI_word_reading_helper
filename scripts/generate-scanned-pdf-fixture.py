@@ -7,7 +7,7 @@ import io
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
 
@@ -18,21 +18,22 @@ FONT = Path(r"C:\Windows\Fonts\msyh.ttc")
 
 
 def main() -> None:
-    image = Image.new("RGB", (1240, 1754), "white")
-    draw = ImageDraw.Draw(image)
     title_font = ImageFont.truetype(str(FONT), 78)
     body_font = ImageFont.truetype(str(FONT), 58)
-    draw.text((105, 160), "AI TIP OCR TEST", fill="black", font=title_font)
-    draw.text((105, 330), "OCR Test 12345", fill="black", font=body_font)
-    draw.text((105, 450), "扫描文字测试", fill="black", font=body_font)
-    draw.text((105, 570), "Original layout stays unchanged.", fill="black", font=body_font)
-
-    png = io.BytesIO()
-    image.save(png, format="PNG", optimize=True)
     pdf = io.BytesIO()
-    canvas = Canvas(pdf, pagesize=A4, pageCompression=1)
-    canvas.drawImage(ImageReader(io.BytesIO(png.getvalue())), 0, 0, width=A4[0], height=A4[1])
-    canvas.showPage()
+    page_size = landscape(A4)
+    canvas = Canvas(pdf, pagesize=page_size, pageCompression=1)
+    for page_number in range(1, 5):
+        image = Image.new("RGB", (1600, 900), "white")
+        draw = ImageDraw.Draw(image)
+        draw.text((110, 100), f"AI TIP OCR TEST - PAGE {page_number}", fill="black", font=title_font)
+        draw.text((110, 280), "OCR Test 12345", fill="black", font=body_font)
+        draw.text((110, 405), "扫描文字测试", fill="black", font=body_font)
+        draw.text((110, 530), "Original layout stays unchanged.", fill="black", font=body_font)
+        png = io.BytesIO()
+        image.save(png, format="PNG", optimize=True)
+        canvas.drawImage(ImageReader(io.BytesIO(png.getvalue())), 0, 0, width=page_size[0], height=page_size[1])
+        canvas.showPage()
     canvas.save()
     OUTPUT.write_text(base64.b64encode(pdf.getvalue()).decode("ascii"), encoding="ascii")
     print(f"Wrote {OUTPUT} ({len(pdf.getvalue())} PDF bytes)")
