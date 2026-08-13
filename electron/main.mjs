@@ -429,11 +429,19 @@ async function createWindow() {
       const rootComposer = rootPanel.querySelector('.tip-composer textarea');
       setTextArea(rootComposer, '这个概念是什么意思？');
       rootPanel.querySelector('.send-button').click();
+      const streamingSkillResults = await waitFor('[data-tip-panel="' + rootId + '"] .message.assistant details[data-skill-results]');
+      if (streamingSkillResults.open) throw new Error('流式工具调用轨迹没有默认折叠');
       const rootMessage = await waitUntil(() => {
         const element = document.querySelector('[data-tip-panel="' + rootId + '"] .message.assistant .message-content');
         return element?.textContent?.length > 8 ? element : null;
       }, '根 Tip 回答');
       const rootAnswerText = rootMessage.textContent;
+      const rootSkillResults = rootPanel.querySelector('details[data-skill-results]');
+      if (!rootSkillResults || rootSkillResults.open || !rootSkillResults.querySelector('summary')) throw new Error('工具调用轨迹没有默认折叠或缺少折叠摘要');
+      rootSkillResults.querySelector('summary').click();
+      await waitUntil(() => rootSkillResults.open && rootSkillResults.querySelector('.skill-result'), '展开工具调用轨迹');
+      rootSkillResults.querySelector('summary').click();
+      await waitUntil(() => !rootSkillResults.open, '收回工具调用轨迹');
       selectText(rootMessage, 0, 4);
       (await waitFor('.selection-toolbar button')).click();
       const childPanel = await waitUntil(() => [...document.querySelectorAll('[data-tip-panel]')].find(element => element.getAttribute('data-tip-panel') !== rootId), '子 Tip 面板');
@@ -500,7 +508,7 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, emptyImportDefault: true, globalDropImport: true, unsupportedDropBlocked: true, saveFailureBlocked: true, saveBeforeDropUpload: true, backSaveFailureBlocked: true, saveBeforeBack: true, wordTableDirectEdit: true, wordTableSaveRoundTrip: true, addBlockControlsPreserved: true, firstTipAnswerPreview: true, previewMarkerOpen: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, emptyImportDefault: true, globalDropImport: true, unsupportedDropBlocked: true, saveFailureBlocked: true, saveBeforeDropUpload: true, backSaveFailureBlocked: true, saveBeforeBack: true, wordTableDirectEdit: true, wordTableSaveRoundTrip: true, addBlockControlsPreserved: true, toolTracesCollapsed: true, firstTipAnswerPreview: true, previewMarkerOpen: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
     })()`); }
     catch (error) {
       const diagnostic = await mainWindow.webContents.executeJavaScript("({ step: window.__desktopSmokeStep || 'unknown', text: document.body.innerText.slice(-700), importError: document.querySelector('[data-import-error]')?.textContent || '', editor: document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') || '' })").catch(() => ({}));

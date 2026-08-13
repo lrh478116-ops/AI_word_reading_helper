@@ -19,10 +19,10 @@ const zh: Record<string, string> = {
   "settings.loading": "正在读取配置…", "settings.provider": "API 服务商", "settings.model": "模型名称", "settings.apiUrl": "API 地址", "settings.apiKey": "API Key",
   "settings.refreshModels": "刷新模型列表", "settings.refreshingModels": "正在读取服务商模型…", "settings.modelsUpdated": "已从服务商读取 {count} 个模型", "settings.modelsHint": "列表来自当前接口的 /models；仍可手动填写服务商允许的型号。", "settings.registryDate": "内置接口核对于 {date}",
   "settings.error.apiKeyRequired": "请先填写 API Key", "settings.error.searchKeyRequired": "已启用联网搜索，但尚未填写 Tavily API Key", "settings.error.pythonFailed": "Python 精度自检未通过", "settings.error.emptyModels": "服务商返回了空模型列表", "settings.error.modelsFailed": "模型列表刷新失败：{error}", "settings.error.connection": "连接失败：{error}", "settings.error.invalidUrl": "API 地址必须是有效的 HTTP(S) 地址", "settings.error.httpsRequired": "为保护 API Key，远程接口必须使用 HTTPS", "settings.error.modelRequired": "请填写模型名称", "settings.error.invalidSettings": "设置无效",
-  "settings.test.model": "AI 模型 {model}", "settings.test.search": "联网搜索（剩余约 {remaining}/{limit} 额度）", "settings.test.python": "Python 精确计算", "settings.test.success": "{checks} 均可用",
+  "settings.test.model": "AI 模型 {model}", "settings.test.search": "Tavily 联网搜索（剩余约 {remaining}/{limit} 额度）", "settings.test.referenceSearch": "免 Key 备用参考检索（当前 {count} 个结果）", "settings.test.python": "Python 精确计算", "settings.test.success": "{checks} 均可用",
   "settings.savedKey": "已保存 {mask}（留空保持不变）", "settings.enterKey": "请输入 API Key", "settings.removeKey": "删除已保存的 API Key",
   "settings.systemPrompt": "系统 Prompt", "settings.promptPlaceholder": "定义 AI 的角色、回答风格与约束…", "settings.webSearch": "联网搜索",
-  "settings.webSearchHint": "搜索最新资料并把来源随回答展示（Tavily）", "settings.searchKey": "搜索 API Key", "settings.enterSearchKey": "请输入 Tavily API Key",
+  "settings.webSearchHint": "优先使用 Tavily；未填 Key 时改用有限的中外百科与参考站点，并标记时效风险", "settings.searchKey": "Tavily API Key（可选）", "settings.enterSearchKey": "可选：请输入 Tavily API Key",
   "settings.searchBudget": "搜索额度策略", "settings.freeBudget": "免费额度保护（每条回答最多 1 次）", "settings.qualityBudget": "质量优先（每条回答最多 3 次）",
   "settings.removeSearchKey": "删除已保存的搜索 Key", "settings.python": "Python 精确计算", "settings.pythonHint": "通过本地 Pyodide/WASM 沙箱执行数值计算",
   "settings.reliability": "完整可靠性检查", "settings.reliabilityHint": "多源、原文、引用、量纲、误差、测试与高风险复核",
@@ -59,7 +59,7 @@ const zh: Record<string, string> = {
   "tip.welcome": "当前 Tip 保持独立聊天；开启记忆时可参考本文其他 Tip 的摘要。", "tip.simple": "通俗解释", "tip.detailed": "详细解释", "tip.professional": "专业解释", "tip.example": "举个例子",
   "tip.followup": "继续追问…", "tip.sendHint": "Enter 发送 · Shift + Enter 换行", "tip.stop": "停止", "tip.resolved": "重新打开", "tip.resolve": "标记已解决", "tip.deleteConfirm": "删除这个 Tip、全部对话及其所有子 Tip？", "tip.sourceMessageMissing": "来源聊天消息已失效，请重新选择",
   "tip.treeButton": "Tip 树", "tip.treeKicker": "对话定位", "tip.treeTitle": "Tip 树状图", "tip.treeHint": "点击节点定位对话；直接修改名称并按 Enter 或移开焦点即可保存。", "tip.treeDocument": "原文档", "tip.treeLocate": "定位到这个对话", "tip.treeName": "对话名称",
-  "tip.open": "打开 Tip：{title}", "tip.fullPreview": "首次回答预览", "tip.collapse": "折叠 Tip", "tip.checkingTools": "正在核对工具结果…", "app.entering": "正在进入 AI Tip…"
+  "tip.open": "打开 Tip：{title}", "tip.fullPreview": "首次回答预览", "tip.collapse": "折叠 Tip", "tip.checkingTools": "正在核对工具结果…", "tip.toolsSummary": "工具调用 {count} 项", "tip.toolsWarnings": "{count} 项需注意", "app.entering": "正在进入 AI Tip…"
 };
 
 const en: Record<string, string> = {
@@ -78,10 +78,10 @@ const en: Record<string, string> = {
   "settings.loading": "Loading settings…", "settings.provider": "API provider", "settings.model": "Model", "settings.apiUrl": "API URL", "settings.apiKey": "API key",
   "settings.refreshModels": "Refresh model list", "settings.refreshingModels": "Reading provider models…", "settings.modelsUpdated": "Loaded {count} models from the provider", "settings.modelsHint": "The list comes from this endpoint's /models response. You can still enter any model the provider supports.", "settings.registryDate": "Built-in endpoints verified {date}",
   "settings.error.apiKeyRequired": "Enter an API key first", "settings.error.searchKeyRequired": "Web search is enabled, but no Tavily API key is configured", "settings.error.pythonFailed": "The Python precision self-check failed", "settings.error.emptyModels": "The provider returned an empty model list", "settings.error.modelsFailed": "Could not refresh models: {error}", "settings.error.connection": "Connection failed: {error}", "settings.error.invalidUrl": "The API URL must be a valid HTTP(S) URL", "settings.error.httpsRequired": "Remote APIs must use HTTPS to protect the API key", "settings.error.modelRequired": "Enter a model name", "settings.error.invalidSettings": "Invalid settings",
-  "settings.test.model": "AI model {model}", "settings.test.search": "Web search (approximately {remaining}/{limit} credits remaining)", "settings.test.python": "Precise Python calculations", "settings.test.success": "Available: {checks}",
+  "settings.test.model": "AI model {model}", "settings.test.search": "Tavily web search (approximately {remaining}/{limit} credits remaining)", "settings.test.referenceSearch": "Keyless reference search ({count} current results)", "settings.test.python": "Precise Python calculations", "settings.test.success": "Available: {checks}",
   "settings.savedKey": "Saved {mask} (leave blank to keep it)", "settings.enterKey": "Enter API key", "settings.removeKey": "Remove saved API key", "settings.systemPrompt": "System prompt",
-  "settings.promptPlaceholder": "Define the AI role, answer style, and constraints…", "settings.webSearch": "Web search", "settings.webSearchHint": "Search current sources and show citations with the answer (Tavily)",
-  "settings.searchKey": "Search API key", "settings.enterSearchKey": "Enter Tavily API key", "settings.searchBudget": "Search budget", "settings.freeBudget": "Free-tier protection (max 1 search per answer)",
+  "settings.promptPlaceholder": "Define the AI role, answer style, and constraints…", "settings.webSearch": "Web search", "settings.webSearchHint": "Prefer Tavily; without a key, use a limited set of Chinese and international encyclopedia/reference sites and flag freshness risk",
+  "settings.searchKey": "Tavily API key (optional)", "settings.enterSearchKey": "Optional: enter a Tavily API key", "settings.searchBudget": "Search budget", "settings.freeBudget": "Free-tier protection (max 1 search per answer)",
   "settings.qualityBudget": "Quality first (max 3 searches per answer)", "settings.removeSearchKey": "Remove saved search key", "settings.python": "Precise Python calculations",
   "settings.pythonHint": "Run numerical calculations in a local Pyodide/WASM sandbox", "settings.reliability": "Full reliability checks", "settings.reliabilityHint": "Multiple sources, originals, citations, units, uncertainty, tests, and high-risk review",
   "settings.check.1": "Multi-source cross-check", "settings.check.2": "Original page retrieval", "settings.check.3": "Citation structure audit", "settings.check.4": "Unit and dimension checks",
@@ -117,7 +117,7 @@ const en: Record<string, string> = {
   "tip.welcome": "This Tip has its own chat. Enable memory to reference summaries from other Tips in this document.", "tip.simple": "Simple explanation", "tip.detailed": "Detailed explanation", "tip.professional": "Expert explanation", "tip.example": "Give an example",
   "tip.followup": "Ask a follow-up…", "tip.sendHint": "Enter to send · Shift + Enter for a new line", "tip.stop": "Stop", "tip.resolved": "Reopen", "tip.resolve": "Mark resolved", "tip.deleteConfirm": "Delete this Tip, its chat, and every child Tip?", "tip.sourceMessageMissing": "The source chat message is no longer available. Select it again.",
   "tip.treeButton": "Tip tree", "tip.treeKicker": "Conversation map", "tip.treeTitle": "Tip tree", "tip.treeHint": "Select a node to navigate. Edit its name and press Enter or move focus to save.", "tip.treeDocument": "Source document", "tip.treeLocate": "Go to this conversation", "tip.treeName": "Conversation name",
-  "tip.open": "Open Tip: {title}", "tip.fullPreview": "First answer preview", "tip.collapse": "Collapse Tip", "tip.checkingTools": "Checking tool results…", "app.entering": "Opening AI Tip…"
+  "tip.open": "Open Tip: {title}", "tip.fullPreview": "First answer preview", "tip.collapse": "Collapse Tip", "tip.checkingTools": "Checking tool results…", "tip.toolsSummary": "{count} tool activities", "tip.toolsWarnings": "{count} need attention", "app.entering": "Opening AI Tip…"
 };
 
 const dictionaries: Record<Language, Record<string, string>> = { "zh-CN": zh, en };

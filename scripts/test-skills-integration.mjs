@@ -12,6 +12,7 @@ process.env.AI_TIP_DESKTOP = "1";
 process.env.AI_TIP_DATA_DIR = tempData;
 process.env.OPENAI_API_KEY = "publisher-key-must-not-be-used";
 let searchRequests = 0;
+const referenceSearchRequests = [];
 let modelAssessmentRequests = 0;
 const feedbackPayloads = [];
 const answerSystemPrompts = [];
@@ -88,6 +89,11 @@ const mock = createServer(async (req, res) => {
   if (req.url === "/search") {
     searchRequests += 1;
     const query = String(JSON.parse(raw || "{}").query || "");
+    if (/TAVILY_FAIL/i.test(query)) {
+      res.statusCode = 500;
+      res.end(JSON.stringify({ detail: "simulated Tavily failure" }));
+      return;
+    }
     const policy = /双碳|政策工具|公共治理/i.test(query);
     const professional = /rcu|控制器|控制理论/i.test(query);
     res.end(JSON.stringify({ results: policy ? [
@@ -102,6 +108,26 @@ const mock = createServer(async (req, res) => {
     ] }));
     return;
   }
+  if (req.url?.startsWith("/reference/")) {
+    const url = new URL(req.url, "http://127.0.0.1");
+    const site = url.pathname.split("/").at(-1);
+    const query = url.searchParams.get("q") || "";
+    referenceSearchRequests.push({ site, query });
+    if (site === "baidu" || /REFERENCE_ALL_FAIL/i.test(query)) {
+      res.statusCode = site === "baidu" ? 503 : 504;
+      res.end(JSON.stringify({ error: "simulated reference site failure" }));
+      return;
+    }
+    const sources = {
+      baike360: ["360 百科参考条目", "https://baike.so.com/doc/example.html", "国内百科 REFERENCE_EVIDENCE"],
+      zhwiki: ["中文维基参考条目", "https://zh.wikipedia.org/wiki/Reference_test", "中文参考 REFERENCE_EVIDENCE"],
+      enwiki: ["English Wikipedia reference", "https://en.wikipedia.org/wiki/Reference_test", "International REFERENCE_EVIDENCE"],
+      britannica: ["Britannica reference", "https://www.britannica.com/topic/reference-test", "Encyclopaedia REFERENCE_EVIDENCE"]
+    };
+    const [title, urlValue, content] = sources[site] || ["reference", "https://example.com/reference", "REFERENCE_EVIDENCE"];
+    res.end(JSON.stringify({ items: [{ title, url: urlValue, content: `${query} ${content}` }] }));
+    return;
+  }
   if (req.url === "/feedback-relay") {
     feedbackPayloads.push(JSON.parse(raw || "{}"));
     res.statusCode = 202;
@@ -113,7 +139,7 @@ const mock = createServer(async (req, res) => {
   const last = messages[messages.length - 1] || {};
   const toolResult = last.role === "tool" ? String(last.content || "") : "";
   const isProfessionalClassifier = messages.some((item) => item.role === "system" && String(item.content || "").includes("PROFESSIONALISM_CLASSIFIER_V1"));
-  const hasLengthPrefix = messages.some((item) => item.role === "assistant" && String(item.content || "").includes("LONG_ANSWER_START"));
+  const hasLengthPrefix = last.role === "user" && /(?:Continue exactly where|请严格从上一段回答被截断的位置继续)/i.test(String(last.content || "")) && String(messages.at(-2)?.content || "").includes("LONG_ANSWER_START");
   if (!isProfessionalClassifier && body.tools) answerSystemPrompts.push(String(messages.find((item) => item.role === "system")?.content || ""));
   let message;
   let finishReason = "stop";
@@ -133,7 +159,7 @@ const mock = createServer(async (req, res) => {
     const auditInput = String(last.content || "");
     message = { role: "assistant", content: auditInput.includes("UNSUPPORTED_CLAIM") ? "UNSUPPORTED: 该主张没有被提供的联网证据支持。" : "SUPPORTED: 回答中的结论与工具证据一致，并展示了来源。" };
   } else if (toolResult) {
-    message = { role: "assistant", content: toolResult.includes("官方版本说明") ? "根据搜索来源，最新稳定版是 2.0。[S1]" : "Python 精确计算结果为 0.3。" };
+    message = { role: "assistant", content: toolResult.includes("REFERENCE_EVIDENCE") ? "根据备用参考检索，可以获得概览性信息。[S1]" : toolResult.includes("没有取得可用的联网证据") || toolResult.includes("未取得可用联网证据") ? "本次没有取得可用联网证据，但仍可基于已有上下文给出一般性解释，并明确保留不确定性。" : toolResult.includes("官方版本说明") ? "根据搜索来源，最新稳定版是 2.0。[S1]" : "Python 精确计算结果为 0.3。" };
   } else {
     const question = [...messages].reverse().find((item) => item.role === "user")?.content || "";
     if (String(question).includes("LONG_ANSWER_TEST")) {
@@ -147,7 +173,8 @@ const mock = createServer(async (req, res) => {
       message = { role: "assistant", content: "UNSUPPORTED_CLAIM：该控制器在所有条件下都绝对稳定。[S1]" };
     } else {
       const search = body.tool_choice?.function?.name === "web_search" || String(question).includes("最新");
-      message = { role: "assistant", content: null, tool_calls: [{ id: search ? "call_search" : "call_python", type: "function", function: search ? { name: "web_search", arguments: JSON.stringify({ query: "产品最新稳定版本" }) } : { name: "python_calculate", arguments: JSON.stringify({ code: "decimal.Decimal('0.1') + decimal.Decimal('0.2')" }) } }] };
+      const searchQuery = String(question).includes("REFERENCE_") || String(question).includes("TAVILY_FAIL") ? String(question) : "产品最新稳定版本";
+      message = { role: "assistant", content: null, tool_calls: [{ id: search ? "call_search" : "call_python", type: "function", function: search ? { name: "web_search", arguments: JSON.stringify({ query: searchQuery }) } : { name: "python_calculate", arguments: JSON.stringify({ code: "decimal.Decimal('0.1') + decimal.Decimal('0.2')" }) } }] };
     }
   }
   res.end(JSON.stringify({ id: "chatcmpl-test", object: "chat.completion", created: 0, model: "mock-model", choices: [{ index: 0, message, finish_reason: message.tool_calls ? "tool_calls" : finishReason }] }));
@@ -157,6 +184,8 @@ const listen = (server) => new Promise((resolve, reject) => { server.listen(0, "
 const mockPort = await listen(mock);
 process.env.TAVILY_API_URL = `http://127.0.0.1:${mockPort}/search`;
 process.env.TAVILY_USAGE_URL = `http://127.0.0.1:${mockPort}/usage`;
+process.env.AI_TIP_REFERENCE_SEARCH_BASE_URL = `http://127.0.0.1:${mockPort}/reference`;
+process.env.AI_TIP_ALLOW_INSECURE_REFERENCE_SEARCH = "1";
 process.env.AI_TIP_FEEDBACK_RELAY_URL = `http://127.0.0.1:${mockPort}/feedback-relay`;
 process.env.AI_TIP_ALLOW_INSECURE_FEEDBACK_RELAY = "1";
 const { configureSecretProtection, startServer } = await import("../dist-electron/server.cjs");
@@ -365,6 +394,29 @@ try {
   if (!longAnswer.includes("LONG_ANSWER_START") || !longAnswer.includes("LONG_ANSWER_END") || longAnswer.indexOf("LONG_ANSWER_END") <= longAnswer.indexOf("LONG_ANSWER_START") || (longAnswer.match(/LONG_ANSWER_START/g) || []).length !== 1 || (longAnswer.match(/LONG_ANSWER_END/g) || []).length !== 1) throw new Error(`finish_reason=length 没有形成无重复的完整续写：${JSON.stringify({ length: longAnswer.length, start: longAnswer.slice(0, 40), end: longAnswer.slice(-40) })}`);
   if (!finalTip?.messages?.some((item) => item.skills?.some((skill) => skill.name === "web_search"))) throw new Error("技能记录未持久化");
 
+  await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, clearSearchApiKey: true, pythonEnabled: true }) }, token);
+  const tavilyRequestsBeforeFallback = searchRequests;
+  const fallbackRequestStart = referenceSearchRequests.length;
+  const fallbackEvents = await chat(created.tip.id, "请联网搜索 REFERENCE_FALLBACK_TEST", token);
+  const fallbackAnswer = fallbackEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
+  const fallbackTrace = fallbackEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search");
+  const fallbackCalls = referenceSearchRequests.slice(fallbackRequestStart);
+  if (searchRequests !== tavilyRequestsBeforeFallback || fallbackCalls.length < 4 || !fallbackCalls.some((item) => item.site === "baidu") || fallbackTrace?.skill?.status !== "success" || !String(fallbackTrace.skill.detail).includes("备用") || !fallbackAnswer.includes("[S1]") || !fallbackAnswer.includes("数据可能不够精细或最新") || !fallbackAnswer.includes("Tavily API")) throw new Error(`无 Tavily Key 的备用中外参考检索没有进入正式回答链：${JSON.stringify({ tavilyDelta: searchRequests - tavilyRequestsBeforeFallback, fallbackCalls, trace: fallbackTrace?.skill, answer: fallbackAnswer })}`);
+  const persistedFallback = (await request(`/documents/${loaded.document.id}`, {}, token)).tips.find((item) => item.id === created.tip.id)?.messages?.at(-1);
+  if (!persistedFallback?.skills?.some((skill) => skill.name === "web_search" && skill.sources?.length >= 2) || persistedFallback.content !== fallbackAnswer) throw new Error("备用检索来源、降级提示或回答没有持久化");
+
+  const allFailEvents = await chat(created.tip.id, "请联网搜索 REFERENCE_ALL_FAIL", token);
+  const allFailAnswer = allFailEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
+  const allFailTrace = allFailEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search");
+  if (!allFailAnswer || allFailAnswer.includes("[S1]") || allFailTrace?.skill?.status !== "warning" || !allFailAnswer.includes("没有取得可用联网证据") || !allFailAnswer.includes("Tavily API")) throw new Error(`备用站点全部失败后聊天没有形成有效降级输出：${JSON.stringify({ trace: allFailTrace?.skill, answer: allFailAnswer })}`);
+
+  await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchApiKey: "tvly-test", pythonEnabled: true }) }, token);
+  const referenceBeforeTavilyFailure = referenceSearchRequests.length;
+  const tavilyFailEvents = await chat(created.tip.id, "请联网搜索 TAVILY_FAIL", token);
+  const tavilyFailAnswer = tavilyFailEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
+  const tavilyFailTrace = tavilyFailEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search");
+  if (!tavilyFailAnswer || tavilyFailTrace?.skill?.status !== "warning" || referenceSearchRequests.length !== referenceBeforeTavilyFailure || tavilyFailAnswer.includes("Tavily API Key，以获得")) throw new Error(`Tavily 搜索失败后没有在不伪装备用检索的情况下继续回答：${JSON.stringify({ trace: tavilyFailTrace?.skill, answer: tavilyFailAnswer, referenceDelta: referenceSearchRequests.length - referenceBeforeTavilyFailure })}`);
+
   const nestedSourceTip = (await request(`/documents/${loaded.document.id}`, {}, token)).tips.find((item) => item.id === created.tip.id);
   const nestedSourceMessage = [...nestedSourceTip.messages].reverse().find((item) => item.role === "assistant" && item.content.includes("政策评估"));
   if (!nestedSourceMessage) throw new Error("缺少用于聊天内 Tip 的持久化消息 fixture");
@@ -412,7 +464,7 @@ try {
   process.env.AI_TIP_FEEDBACK_RELAY_URL = "";
   const unconfiguredFeedback = await fetch(`${base}/feedback`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${registered.token}` }, body: JSON.stringify({ category: "other", message: "中继未配置时，这段建议必须明确返回失败。" }) });
   if (unconfiguredFeedback.status !== 503) throw new Error("建议中继未配置时没有明确失败");
-  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, policyProfessionalReview: true, professionalReview: true, unsupportedAnswerPreserved: true, assessmentFailureAnswered: true, outputLengthContinued: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, filenameMigration: true, pdfImport: true, pdfOriginalTip: true, pdfRecursiveTip: true, pdfOrphanChatBlocked: true, pdfAnnotationExport: true, pdfBytePreservation: true, uploadOver10Mb: true, uploadTempCleanup: true, englishPromptCausal: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, feedbackRelay: true, citationAudit: true, humanReview: true, persisted: true }));
+  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, policyProfessionalReview: true, professionalReview: true, fallbackReferenceSearch: true, fallbackSiteSkip: true, fallbackAllFailedAnswered: true, tavilyFailedAnswered: true, unsupportedAnswerPreserved: true, assessmentFailureAnswered: true, outputLengthContinued: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, filenameMigration: true, pdfImport: true, pdfOriginalTip: true, pdfRecursiveTip: true, pdfOrphanChatBlocked: true, pdfAnnotationExport: true, pdfBytePreservation: true, uploadOver10Mb: true, uploadTempCleanup: true, englishPromptCausal: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, feedbackRelay: true, citationAudit: true, humanReview: true, persisted: true }));
 } finally {
   await new Promise((resolve) => appServer.close(resolve));
   await new Promise((resolve) => mock.close(resolve));

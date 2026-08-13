@@ -582,11 +582,16 @@ function TipTreeDialog({ tips, activeId, onClose, onNavigate, onRename }: { tips
 }
 
 function SkillResults({ skills }: { skills?: SkillTrace[] }) {
+  const { t } = useI18n();
   if (!skills?.length) return null;
-  return <div className="skill-results">{skills.map((skill, index) => <div className={`skill-result ${skill.name} ${skill.status || "success"}`} key={`${skill.name}-${index}`}>
-    <span>{["web_search", "web_fetch", "cross_check", "conflict_check", "freshness_check"].includes(skill.name) ? <Globe2 size={12} /> : ["python", "unit_check", "uncertainty", "symbolic_math", "data_analysis"].includes(skill.name) ? <Calculator size={12} /> : <ShieldCheck size={12} />}{skill.label}</span><small>{skill.detail}</small>
-    {skill.sources?.length ? <div className="skill-sources">{skill.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}</div> : null}
-  </div>)}</div>;
+  const warnings = skills.filter((skill) => skill.status === "warning" || skill.status === "error").length;
+  return <details className="skill-results" data-skill-results>
+    <summary><span><Zap size={12} />{t("tip.toolsSummary", { count: skills.length })}</span>{warnings > 0 && <small>{t("tip.toolsWarnings", { count: warnings })}</small>}<ChevronDown size={13} /></summary>
+    <div className="skill-results-body">{skills.map((skill, index) => <div className={`skill-result ${skill.name} ${skill.status || "success"}`} key={`${skill.name}-${index}`}>
+      <span>{["web_search", "web_fetch", "cross_check", "conflict_check", "freshness_check"].includes(skill.name) ? <Globe2 size={12} /> : ["python", "unit_check", "uncertainty", "symbolic_math", "data_analysis"].includes(skill.name) ? <Calculator size={12} /> : <ShieldCheck size={12} />}{skill.label}</span><small>{skill.detail}</small>
+      {skill.sources?.length ? <div className="skill-sources">{skill.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}</div> : null}
+    </div>)}</div>
+  </details>;
 }
 
 interface TipPanelProps { tip: TipThread; childTips: TipThread[]; streamingText: string; streamingSkills: SkillTrace[]; isStreaming: boolean; error: string; contextMode?: boolean; onSend: (question: string) => void; onStop: () => void; onCollapse: () => void; onFocus?: () => void; onResolve: () => void; onDelete: () => void; onToggleMemory: () => void; onMessageSelection: (selection: ChatSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; }
