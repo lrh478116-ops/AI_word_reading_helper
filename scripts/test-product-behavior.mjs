@@ -1,13 +1,14 @@
 process.env.AI_TIP_EMBEDDED = "1";
 
 const { normalizeLanguage, translate } = await import("../src/i18n.ts");
-const { assessQuestionProfessionalism, isLegacyTransformerSeedDocument } = await import("../dist-electron/server.cjs");
+const { DEFAULT_SYSTEM_PROMPTS, assessQuestionProfessionalism, isLegacyTransformerSeedDocument } = await import("../dist-electron/server.cjs");
 
 if (normalizeLanguage("invalid") !== "zh-CN") throw new Error("非法语言没有回退为简体中文");
 if (translate("zh-CN", "auth.localUse") !== "仅本地使用") throw new Error("中文本地入口文案错误");
 if (translate("en", "auth.localUse") !== "Local use only") throw new Error("英文本地入口文案错误");
 if (translate("zh-CN", "auth.localUse") === translate("en", "auth.localUse")) throw new Error("语言输出没有因语言状态改变");
 if (translate("zh-CN", "nav.logout") !== "退出登录" || translate("en", "nav.logout") !== "Sign out") throw new Error("退出登录文案未接入语言表");
+if (!DEFAULT_SYSTEM_PROMPTS.en.startsWith("You are") || /[\u3400-\u9fff]/u.test(DEFAULT_SYSTEM_PROMPTS.en)) throw new Error("英文内置 Prompt 仍包含中文默认内容");
 
 const legacy = {
   title: "理解 Transformer 的注意力机制",

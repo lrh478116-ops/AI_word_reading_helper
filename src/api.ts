@@ -1,4 +1,5 @@
 import type { AiSettings, AiSettingsInput, DocumentBlock, DocumentItem, SkillTrace, TipThread, User } from "./types";
+import type { PromptLanguage } from "./prompts";
 
 const TOKEN_KEY = "ai-tip-token";
 
@@ -41,6 +42,16 @@ export const api = {
     request<{ ok: boolean; message: string }>("/feedback", { method: "POST", body: JSON.stringify({ category, message }) }),
   documents: (status = "active") => request<{ documents: DocumentItem[] }>(`/documents?status=${status}`),
   document: (id: string) => request<{ document: DocumentItem; tips: TipThread[] }>(`/documents/${id}`),
+  documentSource: async (id: string) => {
+    const response = await fetch(`/api/documents/${id}/source`, { headers: { Authorization: `Bearer ${session.get()}` } });
+    if (response.status === 401) session.clear();
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || "PDF 原文件读取失败");
+    }
+    if (!String(response.headers.get("content-type") || "").toLowerCase().startsWith("application/pdf")) throw new Error("服务器没有返回有效的 PDF 内容");
+    return new Uint8Array(await response.arrayBuffer());
+  },
   createDocument: () => request<{ document: DocumentItem }>("/documents", { method: "POST", body: "{}" }),
   updateDocument: (id: string, patch: Partial<Pick<DocumentItem, "title" | "favorite" | "status">> & { blocks?: DocumentBlock[] }) =>
     request<{ document: DocumentItem }>(`/documents/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -58,11 +69,11 @@ export const api = {
   updateTip: (tipId: string, patch: Partial<Pick<TipThread, "status" | "title" | "memoryEnabled">>) =>
     request<{ tip: TipThread }>(`/tips/${tipId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTip: (tipId: string) => request<{ ok: boolean; deletedIds: string[] }>(`/tips/${tipId}`, { method: "DELETE" }),
-  streamTip: async (tipId: string, question: string, signal: AbortSignal, onChunk: (chunk: string) => void, onSkill?: (skill: SkillTrace) => void) => {
+  streamTip: async (tipId: string, question: string, language: PromptLanguage, signal: AbortSignal, onChunk: (chunk: string) => void, onSkill?: (skill: SkillTrace) => void) => {
     const response = await fetch(`/api/tips/${tipId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.get()}` },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, language }),
       signal
     });
     if (!response.ok || !response.body) {

@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { api, session } from "./api";
 import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type Language } from "./i18n";
+import { resolveSystemPrompt } from "./prompts";
+import { PdfPreview } from "./PdfPreview";
 import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import { buildTipForest, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
 
@@ -117,7 +119,8 @@ const providerOptions: Array<{ value: ApiProvider; label: string; baseURL: strin
 ];
 
 function SettingsModal({ onClose }: { onClose: () => void }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
+  const languageRef = useRef(language);
   const [saved, setSaved] = useState<AiSettings | null>(null);
   const [draft, setDraft] = useState<AiSettingsInput>({ provider: "openai", baseURL: "", model: "", systemPrompt: "", webSearchEnabled: false, searchBudgetMode: "free", pythonEnabled: true, reliabilityEnabled: true });
   const [loading, setLoading] = useState(true);
@@ -129,15 +132,23 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [feedbackMessage, setFeedbackMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
+
+  useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", closeOnEscape);
     api.settings().then(({ settings }) => {
       setSaved(settings);
-      setDraft({ provider: settings.provider, baseURL: settings.baseURL, model: settings.model, systemPrompt: settings.systemPrompt, webSearchEnabled: settings.webSearchEnabled, searchBudgetMode: settings.searchBudgetMode, pythonEnabled: settings.pythonEnabled, reliabilityEnabled: settings.reliabilityEnabled });
+      setDraft({ provider: settings.provider, baseURL: settings.baseURL, model: settings.model, systemPrompt: resolveSystemPrompt(settings.systemPrompt, languageRef.current), webSearchEnabled: settings.webSearchEnabled, searchBudgetMode: settings.searchBudgetMode, pythonEnabled: settings.pythonEnabled, reliabilityEnabled: settings.reliabilityEnabled });
     }).catch((error) => setMessage({ kind: "error", text: error instanceof Error ? error.message : t("settings.loadFailed") }))
       .finally(() => setLoading(false));
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
+
+  useEffect(() => {
+    setDraft((current) => ({ ...current, systemPrompt: resolveSystemPrompt(current.systemPrompt, language) }));
+  }, [language]);
 
   const changeProvider = (provider: ApiProvider) => {
     const preset = providerOptions.find((item) => item.value === provider)!;
@@ -294,7 +305,7 @@ function LibraryScreen({ user, screen, onScreen, onLogout, onSettings }: Library
 
   return (
     <div className="app-layout">
-      <input ref={fileRef} type="file" accept=".txt,.md,.markdown,.docx" hidden onChange={(e) => void upload(e.target.files?.[0])} />
+      <input ref={fileRef} type="file" accept=".txt,.md,.markdown,.docx,.pdf,application/pdf" hidden onChange={(e) => void upload(e.target.files?.[0])} />
       <AppNav user={user} tab={screen.tab} counts={{ all: documents.length, favorite: documents.filter((d) => d.favorite).length, trash: trash.length }} onTab={(tab) => onScreen({ type: "library", tab })} onNew={() => void create()} onUpload={() => fileRef.current?.click()} onLogout={onLogout} onSettings={onSettings} />
       <main className="library-main">
         <header className="library-header">
@@ -628,7 +639,7 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
     const ctrl = new AbortController(); controller.current = ctrl;
     setTips((current) => current.map((tip) => tip.id === tipId ? { ...tip, messages: [...tip.messages, { id: `temp-${Date.now()}`, tipId: tip.id, role: "user", content: question, createdAt: new Date().toISOString() }] } : tip));
     try {
-      const finalTip = await api.streamTip(tipId, question, ctrl.signal, (chunk) => setStreamingText((text) => text + chunk), (skill) => setStreamingSkills((current) => [...current, skill]));
+      const finalTip = await api.streamTip(tipId, question, language, ctrl.signal, (chunk) => setStreamingText((text) => text + chunk), (skill) => setStreamingSkills((current) => [...current, skill]));
       setTips((current) => current.map((tip) => tip.id === tipId ? finalTip : tip)); setStreamingText(""); setStreamingSkills([]);
     } catch (err) {
       if ((err as Error).name !== "AbortError") { setChatError(err instanceof Error ? err.message : t("editor.generateFailed")); setChatErrorTipId(tipId); }
@@ -690,10 +701,12 @@ function EditorScreen({ id, onBack, onSettings }: EditorProps) {
             <div className="page-meta"><span>{documentItem.sourceType === "blank" ? t("editor.personalNote") : t("editor.imported", { type: documentItem.sourceType.toUpperCase() })}</span><span>{t("editor.lastEdited", { time: timeAgo(documentItem.updatedAt, language, t) })}</span></div>
             <input className="document-title" value={documentItem.title} onChange={(e) => updateTitle(e.target.value)} placeholder={t("editor.untitled")} />
             <div className="document-rule" />
-            <div className="blocks">
-              {documentItem.blocks.map((item) => <EditableBlock key={item.id} item={item} tips={tipsByBlock[item.id] || []} onChange={updateBlock} onSelection={setSelection} onOpenTip={openTip} />)}
-            </div>
-            <div className="add-block-row"><button onClick={() => addBlock("paragraph")}><Plus size={15} />{t("editor.addParagraph")}</button><button onClick={() => addBlock("heading")}>{t("editor.heading")}</button><button onClick={() => addBlock("code")}>{t("editor.code")}</button><button onClick={() => addBlock("quote")}>{t("editor.quote")}</button></div>
+            {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }) }} /> : <>
+              <div className="blocks">
+                {documentItem.blocks.map((item) => <EditableBlock key={item.id} item={item} tips={tipsByBlock[item.id] || []} onChange={updateBlock} onSelection={setSelection} onOpenTip={openTip} />)}
+              </div>
+              <div className="add-block-row"><button onClick={() => addBlock("paragraph")}><Plus size={15} />{t("editor.addParagraph")}</button><button onClick={() => addBlock("heading")}>{t("editor.heading")}</button><button onClick={() => addBlock("code")}>{t("editor.code")}</button><button onClick={() => addBlock("quote")}>{t("editor.quote")}</button></div>
+            </>}
           </article>
         </div>
       </main>}

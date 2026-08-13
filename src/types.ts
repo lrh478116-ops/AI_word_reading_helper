@@ -16,7 +16,7 @@ export interface DocumentItem {
   id: string;
   userId: string;
   title: string;
-  sourceType: "blank" | "txt" | "markdown" | "docx";
+  sourceType: "blank" | "txt" | "markdown" | "docx" | "pdf";
   originalName?: string;
   favorite: boolean;
   status: "active" | "deleted";

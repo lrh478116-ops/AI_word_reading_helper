@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, safeStorage, shell } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -80,7 +80,12 @@ async function createWindow() {
   if (smokeTest) {
     const snapshot = await mainWindow.webContents.executeJavaScript("({ title: document.title, url: location.href, text: document.body.innerText.slice(0, 300) })");
     if (snapshot.title === "Error" || !snapshot.text.includes("AI Tip")) throw new Error(`桌面页面加载异常：${JSON.stringify(snapshot)}`);
+    const externalPdfFixturePath = process.env.AI_TIP_PDF_FIXTURE_PATH ? path.resolve(process.env.AI_TIP_PDF_FIXTURE_PATH) : "";
+    const pdfFixturePath = externalPdfFixturePath || path.join(appRoot, "scripts", "fixtures", "chinese-image.pdf.base64");
+    const pdfFixtureBase64 = existsSync(pdfFixturePath) ? readFileSync(pdfFixturePath, "utf8").replace(/\s+/g, "") : "";
     const productBehavior = await mainWindow.webContents.executeJavaScript(`(async () => {
+      const pdfFixtureBase64 = ${JSON.stringify(pdfFixtureBase64)};
+      const capturePdfCanvas = ${JSON.stringify(Boolean(process.env.AI_TIP_PDF_SCREENSHOT_PATH))};
       const waitFor = async (selector, timeout = 5000) => {
         const started = Date.now();
         while (Date.now() - started < timeout) {
@@ -134,6 +139,8 @@ async function createWindow() {
       document.querySelector('.nav-bottom > button').click();
       const settingsLanguage = await waitFor('.settings-body > .language-select select');
       if (settingsLanguage.value !== 'en') throw new Error('设置与登录页没有共享语言状态');
+      const defaultPromptArea = document.querySelector('.settings-body > label textarea[rows="8"]');
+      if (!defaultPromptArea?.value?.startsWith('You are') || /[\u3400-\u9fff]/u.test(defaultPromptArea.value)) throw new Error('英文设置仍显示中文内置 Prompt');
       if (!document.querySelector('.feedback-box') || document.body.innerText.includes('@qq.com')) throw new Error('建议箱缺失或收件地址暴露在界面中');
       const feedbackText = 'This suggestion must remain visible when the email relay is not configured.';
       const feedbackArea = document.querySelector('.feedback-box textarea');
@@ -151,6 +158,36 @@ async function createWindow() {
       if (!document.querySelector('.logout-button')?.textContent?.includes('退出登录')) throw new Error('设置中的语言切换未传播到导航');
       if (localStorage.getItem('ai-tip-language') !== 'zh-CN') throw new Error('设置页语言选择没有持久化');
       document.querySelector('.settings-modal > header .icon-button').click();
+      let pdfVisual = false;
+      let pdfCanvasDataUrl = '';
+      let pdfSecondCanvasDataUrl = '';
+      if (pdfFixtureBase64) {
+        const binary = atob(pdfFixtureBase64); const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+        const file = new File([bytes], '中文图片资料.pdf', { type: 'application/pdf' });
+        const transfer = new DataTransfer(); transfer.items.add(file);
+        const fileInput = document.querySelector('input[type="file"]');
+        fileInput.files = transfer.files;
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        await waitFor('[data-pdf-document]');
+        if (document.querySelector('.document-title')?.value !== '中文图片资料') throw new Error('Electron 文件输入没有保留中文 PDF 标题');
+        const pages = await waitUntil(() => document.querySelectorAll('[data-pdf-page]').length === 2 ? [...document.querySelectorAll('[data-pdf-page]')] : null, 'PDF 两页结构');
+        const firstCanvas = await waitUntil(() => pages[0].classList.contains('rendered') && pages[0].querySelector('canvas')?.width > 500 ? pages[0].querySelector('canvas') : null, 'PDF 第一页 Canvas');
+        const pixels = firstCanvas.getContext('2d').getImageData(0, 0, firstCanvas.width, firstCanvas.height).data;
+        let coloredPixels = 0;
+        for (let index = 0; index < pixels.length; index += 64) {
+          const red = pixels[index], green = pixels[index + 1], blue = pixels[index + 2], alpha = pixels[index + 3];
+          if (alpha > 0 && Math.max(red, green, blue) - Math.min(red, green, blue) > 35) coloredPixels += 1;
+        }
+        if (coloredPixels < 150) throw new Error('PDF 第一页彩色图片或矢量内容没有进入 Canvas');
+        if (capturePdfCanvas) pdfCanvasDataUrl = firstCanvas.toDataURL('image/png');
+        pages[1].scrollIntoView({ block: 'center' });
+        const secondCanvas = await waitUntil(() => pages[1].classList.contains('rendered') && pages[1].querySelector('canvas')?.height > 500 ? pages[1].querySelector('canvas') : null, 'PDF 第二页按需渲染');
+        if (capturePdfCanvas) pdfSecondCanvasDataUrl = secondCanvas.toDataURL('image/png');
+        pdfVisual = true;
+        document.querySelector('.back-button').click();
+        await waitFor('.app-nav');
+      }
       document.querySelector('.header-actions .primary').click();
       const editableBlock = await waitFor('[contenteditable][data-block-id]');
       editableBlock.innerText = '这是用于验证聊天内递归 Tip 的原文内容。';
@@ -213,8 +250,20 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, pdfVisual, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
     })()`);
+    if (process.env.AI_TIP_PDF_SCREENSHOT_PATH && productBehavior.pdfCanvasDataUrl) {
+      const png = String(productBehavior.pdfCanvasDataUrl).replace(/^data:image\/png;base64,/, "");
+      writeFileSync(path.resolve(process.env.AI_TIP_PDF_SCREENSHOT_PATH), Buffer.from(png, "base64"));
+      if (productBehavior.pdfSecondCanvasDataUrl) {
+        const requested = path.parse(path.resolve(process.env.AI_TIP_PDF_SCREENSHOT_PATH));
+        const secondPath = path.join(requested.dir, `${requested.name.replace(/-page-1$/, "")}-page-2${requested.ext || ".png"}`);
+        const secondPng = String(productBehavior.pdfSecondCanvasDataUrl).replace(/^data:image\/png;base64,/, "");
+        writeFileSync(secondPath, Buffer.from(secondPng, "base64"));
+      }
+    }
+    delete productBehavior.pdfCanvasDataUrl;
+    delete productBehavior.pdfSecondCanvasDataUrl;
     if (!pythonCalculation) throw new Error("Python 技能模块未加载");
     const pythonResult = await pythonCalculation("decimal.Decimal('0.1') + decimal.Decimal('0.2')");
     if (!pythonResult.includes("0.3")) throw new Error(`Python 技能自检失败：${pythonResult}`);

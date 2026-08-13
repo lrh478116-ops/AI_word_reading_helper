@@ -1,6 +1,6 @@
 # AI Tip 智能文档
 
-一个把局部 AI 多轮对话绑定到原文位置的智能文档 MVP。支持文档创建、TXT/Markdown/DOCX 导入、块级编辑、自动保存、文档管理，以及可折叠、可恢复的 Tip 对话。
+一个把局部 AI 多轮对话绑定到原文位置的智能文档 MVP。支持文档创建、TXT/Markdown/DOCX/PDF 导入、块级编辑、自动保存、文档管理，以及可折叠、可恢复的 Tip 对话。
 
 ## 运行桌面应用
 
@@ -16,7 +16,7 @@ pnpm desktop:dev
 - 邮箱：`demo@aitip.local`
 - 密码：`demo1234`
 
-“仅本地使用”会通过正式登录接口进入本机账户，不会绕过账户隔离。首次进入时文档库为空，不再自动创建 Transformer 示例文档。登录页和“设置 → 接口与 Prompt”都可以在简体中文与 English 之间切换；选择会保存在本机并立即应用到应用界面。
+“仅本地使用”会通过正式登录接口进入本机账户，不会绕过账户隔离。首次进入时文档库为空，不再自动创建 Transformer 示例文档。登录页和“设置 → 接口与 Prompt”都可以在简体中文与 English 之间切换；选择会保存在本机并立即应用到应用界面。英文模式会在设置中显示英文内置默认 Prompt，并把英文准确性规则作为实际模型 system message 发送；用户自定义 Prompt 不会被自动翻译或覆盖。
 
 下载安装后的本地模式不会使用开发者或打包机器的模型 API Key。Electron 桌面模式明确禁用服务端环境 Key fallback；每台设备只能使用该设备用户在“设置”中主动保存的模型与搜索 Key。`.env`、开发数据目录和开发者 Key 不会进入安装包。
 
@@ -93,7 +93,8 @@ AI_TIP_FEEDBACK_RELAY_TOKEN=your-relay-token
 
 - 注册、登录、JWT 鉴权和用户数据隔离
 - 新建、搜索、排序、收藏、回收站、恢复和永久删除
-- TXT、Markdown、DOCX 导入，10MB 大小限制并保留原始文件
+- TXT、Markdown、DOCX、PDF 导入，10MB 大小限制并保留原始文件；中文、重音字符和 Emoji 文件名在 multipart 边界恢复为 UTF-8
+- PDF 由 PDF.js 从鉴权读取的原始字节按视口延迟渲染；嵌入字体、矢量和图片不经过 OCR 或 JPEG/WebP 二次编码，CMap、标准字体、ICC 与 WASM 资产随桌面安装包离线分发
 - 统一块模型：标题、段落、列表、引用和代码
 - 块级 `contentEditable` 编辑、900ms 防抖自动保存、手动保存和状态反馈
 - 文字选区浮动工具条与 Tip 创建
@@ -118,6 +119,8 @@ AI_TIP_FEEDBACK_RELAY_TOKEN=your-relay-token
 src/
   App.tsx        前端页面与核心交互
   api.ts         鉴权、文档、Tip 与流式请求封装
+  PdfPreview.tsx PDF.js 原页面渲染与按视口加载
+  prompts.ts     中英文内置 Prompt 与准确性规则
   types.ts       统一文档块和 Tip 数据模型
   styles.css     桌面/移动端视觉系统
 server/

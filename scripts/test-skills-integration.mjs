@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import bcrypt from "bcryptjs";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,8 @@ process.env.OPENAI_API_KEY = "publisher-key-must-not-be-used";
 let searchRequests = 0;
 let modelAssessmentRequests = 0;
 const feedbackPayloads = [];
+const answerSystemPrompts = [];
+const chineseDefaultPrompt = "你是文档内的局部阅读助手。围绕用户选中的原文准确回答，先给结论，再解释机制，必要时举例。不要声称看到未提供的全文。使用清晰、专业的中文。";
 
 const legacyUserId = "legacy-demo-user";
 const legacyDocumentId = "legacy-transformer-document";
@@ -43,6 +46,10 @@ await writeFile(path.join(tempData, "store.json"), JSON.stringify({
     id: "migration-document", userId: legacyUserId, title: "旧 Tip 迁移验证", sourceType: "blank", favorite: false, status: "deleted",
     blocks: [{ id: "migration-block", documentId: "migration-document", type: "paragraph", content: "legacy anchor text", order: 0, contentHash: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), tipCount: 2
+  }, {
+    id: "mojibake-document", userId: legacyUserId, title: "å®ä¹ è¿åº¦1", sourceType: "markdown", originalName: "å®ä¹ è¿åº¦1.md", favorite: false, status: "active",
+    blocks: [{ id: "mojibake-block", documentId: "mojibake-document", type: "paragraph", content: "旧文件名迁移内容", order: 0, contentHash: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), tipCount: 0
   }],
   tips: [
     { id: "legacy-tip", userId: legacyUserId, documentId: legacyDocumentId, blockId: "legacy-paragraph", messages: [] },
@@ -52,6 +59,8 @@ await writeFile(path.join(tempData, "store.json"), JSON.stringify({
   ],
   settings: []
 }, null, 2), "utf8");
+await mkdir(path.join(tempData, "uploads", "mojibake-document"), { recursive: true });
+await writeFile(path.join(tempData, "uploads", "mojibake-document", "å®ä¹ è¿åº¦1.md"), "旧文件名迁移内容", "utf8");
 
 const mock = createServer(async (req, res) => {
   let raw = "";
@@ -89,6 +98,7 @@ const mock = createServer(async (req, res) => {
   const last = messages[messages.length - 1] || {};
   const toolResult = last.role === "tool" ? String(last.content || "") : "";
   const isProfessionalClassifier = messages.some((item) => item.role === "system" && String(item.content || "").includes("PROFESSIONALISM_CLASSIFIER_V1"));
+  if (!isProfessionalClassifier && body.tools) answerSystemPrompts.push(String(messages.find((item) => item.role === "system")?.content || ""));
   let message;
   if (isProfessionalClassifier) {
     modelAssessmentRequests += 1;
@@ -143,8 +153,8 @@ async function request(route, init = {}, token = "") {
   return body;
 }
 
-async function chat(tipId, question, token) {
-  const response = await fetch(`${base}/tips/${tipId}/chat`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ question }) });
+async function chat(tipId, question, token, language) {
+  const response = await fetch(`${base}/tips/${tipId}/chat`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ question, ...(language ? { language } : {}) }) });
   const lines = (await response.text()).trim().split("\n").map((line) => JSON.parse(line));
   const error = lines.find((item) => item.type === "error");
   if (error) throw new Error(error.error);
@@ -154,6 +164,11 @@ async function chat(tipId, question, token) {
 try {
   const login = await request("/auth/login", { method: "POST", body: JSON.stringify({ email: "demo@aitip.local", password: "demo1234" }) });
   const token = login.token;
+  const migratedNames = await request("/documents", {}, token);
+  const migratedNameDocument = migratedNames.documents.find((item) => item.id === "mojibake-document");
+  if (migratedNameDocument?.title !== "实习进度1" || migratedNameDocument.originalName !== "实习进度1.md") throw new Error(`正式启动没有修复旧乱码标题：${JSON.stringify(migratedNameDocument)}`);
+  if ((await readFile(path.join(tempData, "uploads", "mojibake-document", "实习进度1.md"), "utf8")) !== "旧文件名迁移内容") throw new Error("旧乱码磁盘文件没有与 originalName 同步迁移");
+  await request("/documents/mojibake-document?permanent=true", { method: "DELETE" }, token);
   const migrated = await request("/documents/migration-document", {}, token);
   const migratedRoot = migrated.tips.find((item) => item.id === "migration-root-tip");
   const migratedOrphan = migrated.tips.find((item) => item.id === "migration-orphan-tip");
@@ -163,8 +178,8 @@ try {
   if (orphanChat.status !== 409) throw new Error("孤儿消息 Tip 绕过父链验证进入了聊天入口");
   const depthOverflow = await fetch(`${base}/tips/deep-tip-32/children`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ messageId: "deep-source-32", selectedText: "deep", startOffset: 0, endOffset: 4, prefixText: "", suffixText: " anchor" }) });
   if (depthOverflow.status !== 409) throw new Error("正式子 Tip 创建接口没有拒绝第 33 层");
-  await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: "准确回答", webSearchEnabled: true, searchApiKey: "tvly-test", pythonEnabled: true }) }, token);
-  const connectionTest = await request("/settings/test", { method: "POST", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", systemPrompt: "准确回答", webSearchEnabled: true, searchBudgetMode: "free", pythonEnabled: false }) }, token);
+  await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchApiKey: "tvly-test", pythonEnabled: true }) }, token);
+  const connectionTest = await request("/settings/test", { method: "POST", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchBudgetMode: "free", pythonEnabled: false }) }, token);
   if (!connectionTest.message.includes("988/1000") || searchRequests !== 0) throw new Error("额度查询不应消耗搜索请求");
   const persistedSettings = await readFile(path.join(tempData, "store.json"), "utf8");
   if (persistedSettings.includes("test-key") || persistedSettings.includes("tvly-test") || !persistedSettings.includes("safe:v1:")) throw new Error("API Key 未加密保存");
@@ -173,12 +188,36 @@ try {
   const registered = await request("/auth/register", { method: "POST", body: JSON.stringify({ name: "新用户", email: "fresh@example.com", password: "123456" }) });
   const registeredDocuments = await request("/documents", {}, registered.token);
   if (registeredDocuments.documents.length !== 0) throw new Error("注册路径仍然创建示例文档");
+
+  const pdfBytes = Buffer.from((await readFile(new URL("./fixtures/chinese-image.pdf.base64", import.meta.url), "utf8")).replace(/\s+/g, ""), "base64");
+  const pdfForm = new FormData();
+  pdfForm.append("file", new Blob([pdfBytes], { type: "application/pdf" }), "中文图片资料.pdf");
+  const importedPdfResponse = await fetch(`${base}/documents/import`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: pdfForm });
+  const importedPdfBody = await importedPdfResponse.json();
+  if (!importedPdfResponse.ok || importedPdfBody.document?.title !== "中文图片资料" || importedPdfBody.document?.originalName !== "中文图片资料.pdf" || importedPdfBody.document?.sourceType !== "pdf") throw new Error(`PDF 没有通过正式上传入口持久化正确标题：${JSON.stringify(importedPdfBody)}`);
+  const pdfSourceResponse = await fetch(`${base}/documents/${importedPdfBody.document.id}/source`, { headers: { Authorization: `Bearer ${token}` } });
+  const returnedPdf = Buffer.from(await pdfSourceResponse.arrayBuffer());
+  if (!pdfSourceResponse.ok || pdfSourceResponse.headers.get("content-type") !== "application/pdf" || createHash("sha256").update(returnedPdf).digest("hex") !== createHash("sha256").update(pdfBytes).digest("hex")) throw new Error("PDF 原始字节没有经过鉴权源接口无损返回");
+  const crossUserSource = await fetch(`${base}/documents/${importedPdfBody.document.id}/source`, { headers: { Authorization: `Bearer ${registered.token}` } });
+  if (crossUserSource.status !== 404) throw new Error("其他用户读取到了 PDF 原始文件");
+  const fakePdfForm = new FormData();
+  fakePdfForm.append("file", new Blob([Buffer.from("not a pdf")], { type: "application/pdf" }), "伪装文件.pdf");
+  const fakePdfResponse = await fetch(`${base}/documents/import`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: fakePdfForm });
+  if (fakePdfResponse.status !== 422) throw new Error("伪造 PDF 文件头没有被正式上传入口拒绝");
+  await request(`/documents/${importedPdfBody.document.id}?permanent=true`, { method: "DELETE" }, token);
+  const deletedPdfSource = await fetch(`${base}/documents/${importedPdfBody.document.id}/source`, { headers: { Authorization: `Bearer ${token}` } });
+  if (deletedPdfSource.status !== 404) throw new Error("永久删除后 PDF 原始文件仍可读取");
+
   const createdDocument = await request("/documents", { method: "POST", body: "{}" }, token);
   const seedText = "自注意力机制允许序列中的每个 Token 根据相关性聚合其他 Token 的信息。";
   await request(`/documents/${createdDocument.document.id}`, { method: "PATCH", body: JSON.stringify({ title: "集成测试文档", blocks: [{ ...createdDocument.document.blocks[0], content: seedText }] }) }, token);
   const loaded = await request(`/documents/${createdDocument.document.id}`, {}, token);
   const block = loaded.document.blocks[0];
   const created = await request(`/documents/${loaded.document.id}/tips`, { method: "POST", body: JSON.stringify({ blockId: block.id, selectedText: block.content.slice(0, 12), startOffset: 0, endOffset: 12, prefixText: "", suffixText: block.content.slice(12, 24) }) }, token);
+
+  await chat(created.tip.id, "Please explain the selected text briefly.", token, "en");
+  const englishAnswerPrompt = answerSystemPrompts.findLast((prompt) => prompt.startsWith("You are"));
+  if (!englishAnswerPrompt || englishAnswerPrompt.includes("你是文档内的局部阅读助手") || /正确性规则/u.test(englishAnswerPrompt)) throw new Error(`英文请求的模型 system message 仍消费中文内置 Prompt：${englishAnswerPrompt}`);
 
   const pythonEvents = await chat(created.tip.id, "请计算 0.1 + 0.2", token);
   const searchEvents = await chat(created.tip.id, "请联网搜索最新稳定版本", token);
@@ -287,7 +326,7 @@ try {
   process.env.AI_TIP_FEEDBACK_RELAY_URL = "";
   const unconfiguredFeedback = await fetch(`${base}/feedback`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${registered.token}` }, body: JSON.stringify({ category: "other", message: "中继未配置时，这段建议必须明确返回失败。" }) });
   if (unconfiguredFeedback.status !== 503) throw new Error("建议中继未配置时没有明确失败");
-  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, policyProfessionalReview: true, professionalReview: true, unsupportedBlocked: true, assessmentFailureBlocked: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, feedbackRelay: true, citationAudit: true, humanReview: true, persisted: true }));
+  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, policyProfessionalReview: true, professionalReview: true, unsupportedBlocked: true, assessmentFailureBlocked: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, filenameMigration: true, pdfImport: true, pdfBytePreservation: true, englishPromptCausal: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, feedbackRelay: true, citationAudit: true, humanReview: true, persisted: true }));
 } finally {
   await new Promise((resolve) => appServer.close(resolve));
   await new Promise((resolve) => mock.close(resolve));
