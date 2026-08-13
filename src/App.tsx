@@ -11,7 +11,7 @@ import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type L
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
 import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
-import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, PdfSelectionInfo, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
+import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, PdfSelectionInfo, PdfTableData, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import { buildTipForest, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
 
 type Screen = { type: "library"; tab: "all" | "favorites" | "trash" } | { type: "editor"; id: string };
@@ -375,12 +375,55 @@ function rectForOffsets(root: HTMLElement, start: number, end: number) {
   return rects.length ? rects[0] : range.getBoundingClientRect();
 }
 
-function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item: DocumentBlock; tips: TipThread[]; onChange: (id: string, value: string) => void; onSelection: (selection: SelectionInfo) => void; onOpenTip: (tip: TipThread) => void }) {
+function tableText(rows: string[][]) {
+  return rows.map((row) => row.join("\t")).join("\n");
+}
+
+function tableCellOffset(rows: string[][], rowIndex: number, cellIndex: number) {
+  let offset = 0;
+  for (let row = 0; row < rowIndex; row++) offset += rows[row].reduce((total, cell) => total + cell.length, 0) + Math.max(0, rows[row].length - 1) + 1;
+  for (let cell = 0; cell < cellIndex; cell++) offset += rows[rowIndex][cell].length + 1;
+  return offset;
+}
+
+function tableSelectionOffset(root: HTMLElement, node: Node, offset: number, rows: string[][]) {
+  const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+  const cell = element?.closest<HTMLElement>("[data-table-cell]");
+  if (!cell || !root.contains(cell)) return null;
+  const [rowIndex, cellIndex] = String(cell.dataset.tableCell || "").split(":").map(Number);
+  if (!Number.isInteger(rowIndex) || !Number.isInteger(cellIndex) || !rows[rowIndex]?.[cellIndex] && rows[rowIndex]?.[cellIndex] !== "") return null;
+  return tableCellOffset(rows, rowIndex, cellIndex) + offsetWithin(cell, node, offset);
+}
+
+function tableRectForOffsets(root: HTMLElement, rows: string[][], start: number, end: number) {
+  let startCell: HTMLElement | null = null; let endCell: HTMLElement | null = null;
+  let startLocal = 0; let endLocal = 0;
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    for (let cellIndex = 0; cellIndex < rows[rowIndex].length; cellIndex++) {
+      const cell = rows[rowIndex][cellIndex];
+      const base = tableCellOffset(rows, rowIndex, cellIndex);
+      const element = root.querySelector<HTMLElement>(`[data-table-cell="${rowIndex}:${cellIndex}"]`);
+      if (!element) continue;
+      if (!startCell && start >= base && start <= base + cell.length) { startCell = element; startLocal = start - base; }
+      if (end >= base && end <= base + cell.length) { endCell = element; endLocal = end - base; }
+    }
+  }
+  if (!startCell || !endCell) return null;
+  const startPoint = rectForOffsets(startCell, startLocal, startLocal || Math.min(1, startCell.innerText.length));
+  if (startCell === endCell) return rectForOffsets(startCell, startLocal, endLocal);
+  const endPoint = rectForOffsets(endCell, Math.max(0, endLocal - 1), endLocal);
+  if (!startPoint || !endPoint) return startPoint || endPoint;
+  return { left: startPoint.left, top: startPoint.top, right: endPoint.right, bottom: endPoint.bottom, width: endPoint.right - startPoint.left, height: endPoint.bottom - startPoint.top, x: startPoint.x, y: startPoint.y, toJSON: () => ({}) } as DOMRect;
+}
+
+type EditableBlockPatch = { content: string; table?: PdfTableData };
+
+function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item: DocumentBlock; tips: TipThread[]; onChange: (id: string, patch: EditableBlockPatch) => void; onSelection: (selection: SelectionInfo) => void; onOpenTip: (tip: TipThread) => void }) {
   const { t } = useI18n();
   const ref = useRef<HTMLElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const [markerPositions, setMarkerPositions] = useState<Record<string, { left: number; top: number }>>({});
-  useEffect(() => { if (ref.current && document.activeElement !== ref.current && ref.current.innerText !== item.content) ref.current.innerText = item.content; }, [item.content]);
+  useEffect(() => { if (item.type !== "table" && ref.current && document.activeElement !== ref.current && ref.current.innerText !== item.content) ref.current.innerText = item.content; }, [item.content, item.type]);
   useLayoutEffect(() => {
     const measure = () => {
       const root = ref.current; const row = rowRef.current;
@@ -388,7 +431,7 @@ function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item:
       const rowRect = row.getBoundingClientRect();
       const next: Record<string, { left: number; top: number }> = {};
       tips.forEach((tip, index) => {
-        const rect = rectForOffsets(root, tip.startOffset, tip.endOffset);
+        const rect = item.type === "table" && item.table ? tableRectForOffsets(root, item.table.rows, tip.startOffset, tip.endOffset) : rectForOffsets(root, tip.startOffset, tip.endOffset);
         next[tip.id] = rect
           ? { left: Math.min(rowRect.width - 22, Math.max(4, rect.right - rowRect.left + 5)), top: Math.max(-7, rect.top - rowRect.top - 9 + index * 3) }
           : { left: rowRect.width - 22, top: index * 24 };
@@ -397,25 +440,60 @@ function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item:
     };
     measure(); window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, [item.content, tips]);
+  }, [item.content, item.table, item.type, tips]);
   const select = () => {
     const selection = window.getSelection();
     const root = ref.current;
     if (!selection || selection.isCollapsed || !root || !selection.anchorNode || !selection.focusNode || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) return;
     const rawText = selection.toString();
-    const text = rawText.trim();
+    let text = rawText.trim();
     if (!text) return;
-    const rawStart = Math.min(offsetWithin(root, selection.anchorNode, selection.anchorOffset), offsetWithin(root, selection.focusNode, selection.focusOffset));
-    const leadingWhitespace = rawText.length - rawText.trimStart().length;
-    const start = rawStart + leadingWhitespace;
-    const end = start + text.length;
+    let start: number; let end: number;
+    if (item.type === "table" && item.table) {
+      const anchorOffset = tableSelectionOffset(root, selection.anchorNode, selection.anchorOffset, item.table.rows);
+      const focusOffset = tableSelectionOffset(root, selection.focusNode, selection.focusOffset, item.table.rows);
+      if (anchorOffset == null || focusOffset == null) return;
+      start = Math.min(anchorOffset, focusOffset); end = Math.max(anchorOffset, focusOffset);
+      while (start < end && /\s/.test(item.content[start])) start += 1;
+      while (end > start && /\s/.test(item.content[end - 1])) end -= 1;
+      text = item.content.slice(start, end);
+    } else {
+      const rawStart = Math.min(offsetWithin(root, selection.anchorNode, selection.anchorOffset), offsetWithin(root, selection.focusNode, selection.focusOffset));
+      const leadingWhitespace = rawText.length - rawText.trimStart().length;
+      start = rawStart + leadingWhitespace;
+      end = start + text.length;
+    }
+    if (!text) return;
     onSelection({ source: "document", blockId: item.id, text, startOffset: start, endOffset: end, rect: selection.getRangeAt(0).getBoundingClientRect() });
   };
+  if (item.type === "table" && item.table) {
+    const editCell = (rowIndex: number, cellIndex: number, content: string) => {
+      const rows = item.table!.rows.map((row) => [...row]); rows[rowIndex][cellIndex] = content;
+      const cells = rows.map((row, currentRow) => row.map((value, currentCell) => ({
+        content: value,
+        header: item.table!.cells?.[currentRow]?.[currentCell]?.header ?? currentRow < item.table!.headerRows,
+        colSpan: item.table!.cells?.[currentRow]?.[currentCell]?.colSpan || 1,
+        rowSpan: item.table!.cells?.[currentRow]?.[currentCell]?.rowSpan || 1
+      })));
+      const table = { ...item.table!, rows, cells };
+      onChange(item.id, { content: tableText(rows), table });
+    };
+    return <div ref={rowRef} className="block-row block-table" data-block-row={item.id}>
+      <div className="word-table-scroll">
+        <table ref={ref as React.Ref<HTMLTableElement>} className="word-table" data-block-id={item.id} data-word-table onMouseUp={select} onKeyUp={select}><tbody>{item.table.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((content, cellIndex) => {
+          const metadata = item.table!.cells?.[rowIndex]?.[cellIndex];
+          const Tag = metadata?.header || rowIndex < item.table!.headerRows ? "th" : "td";
+          return <Tag key={cellIndex} data-table-cell={`${rowIndex}:${cellIndex}`} colSpan={metadata?.colSpan || 1} rowSpan={metadata?.rowSpan || 1} contentEditable suppressContentEditableWarning spellCheck onInput={(event) => editCell(rowIndex, cellIndex, event.currentTarget.innerText)}>{content}</Tag>;
+        })}</tr>)}</tbody></table>
+      </div>
+      {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <button key={tip.id} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onClick={() => onOpenTip(tip)} title={t("tip.open", { title: tip.summary || tip.title })}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</button>)}</div>}
+    </div>;
+  }
   const Tag = item.type === "heading" ? (item.level === 1 ? "h1" : item.level === 3 ? "h3" : "h2") : item.type === "code" ? "pre" : item.type === "quote" ? "blockquote" : "p";
   return (
     <div ref={rowRef} className={`block-row block-${item.type}`} data-block-row={item.id}>
       {item.type === "list_item" && <span className="list-bullet">•</span>}
-      <Tag ref={ref as never} data-block-id={item.id} contentEditable suppressContentEditableWarning spellCheck onInput={(e) => onChange(item.id, e.currentTarget.innerText)} onMouseUp={select} onKeyUp={select}>{item.content}</Tag>
+      <Tag ref={ref as never} data-block-id={item.id} contentEditable suppressContentEditableWarning spellCheck onInput={(e) => onChange(item.id, { content: e.currentTarget.innerText })} onMouseUp={select} onKeyUp={select}>{item.content}</Tag>
       {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <button key={tip.id} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onClick={() => onOpenTip(tip)} title={t("tip.open", { title: tip.summary || tip.title })}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</button>)}</div>}
     </div>
   );
@@ -632,20 +710,44 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
     return () => { window.removeEventListener("online", online); window.removeEventListener("offline", offline); };
   }, []);
 
-  const updateBlock = (blockId: string, content: string) => {
-    setDocumentItem((current) => current ? { ...current, blocks: current.blocks.map((b) => b.id === blockId ? { ...b, content, updatedAt: new Date().toISOString() } : b) } : current);
+  const updateBlock = (blockId: string, patch: EditableBlockPatch) => {
+    const current = documentRef.current;
+    if (!current) return;
+    const next = { ...current, blocks: current.blocks.map((b) => b.id === blockId ? { ...b, ...patch, updatedAt: new Date().toISOString() } : b) };
+    documentRef.current = next;
+    setDocumentItem(next);
     dirty.current = true; editVersion.current += 1;
   };
-  const updateTitle = (title: string) => { setDocumentItem((current) => current ? { ...current, title } : current); dirty.current = true; editVersion.current += 1; };
+  const updateTitle = (title: string) => {
+    const current = documentRef.current;
+    if (!current) return;
+    const next = { ...current, title };
+    documentRef.current = next;
+    setDocumentItem(next); dirty.current = true; editVersion.current += 1;
+  };
   const manualSave = async () => {
     try { await saveNow(); }
     catch { setSaveState("error"); }
   };
+  const leaveEditor = async () => {
+    try { await saveNow(); onBack(); }
+    catch { setSaveState("error"); }
+  };
+  useEffect(() => {
+    const saveShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void manualSave(); }
+    };
+    window.addEventListener("keydown", saveShortcut);
+    return () => window.removeEventListener("keydown", saveShortcut);
+  });
   const addBlock = (type: BlockType) => {
-    if (!documentItem) return;
+    const current = documentRef.current;
+    if (!current) return;
     const stamp = new Date().toISOString();
-    const newBlock: DocumentBlock = { id: crypto.randomUUID(), documentId: documentItem.id, type, content: "", level: type === "heading" ? 2 : undefined, order: documentItem.blocks.length, contentHash: "", createdAt: stamp, updatedAt: stamp };
-    setDocumentItem({ ...documentItem, blocks: [...documentItem.blocks, newBlock] }); dirty.current = true; editVersion.current += 1;
+    const newBlock: DocumentBlock = { id: crypto.randomUUID(), documentId: current.id, type, content: "", level: type === "heading" ? 2 : undefined, order: current.blocks.length, contentHash: "", createdAt: stamp, updatedAt: stamp };
+    const next = { ...current, blocks: [...current.blocks, newBlock] };
+    documentRef.current = next;
+    setDocumentItem(next); dirty.current = true; editVersion.current += 1;
   };
   const createTip = async () => {
     if (!selection || !documentItem) return;
@@ -724,7 +826,7 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
   return (
     <div className={`editor-shell ${activeTip ? "with-tip" : ""} ${!navOpen ? "nav-hidden" : ""}`} data-editor-document={documentItem.id}>
       {navOpen && <aside className="editor-nav">
-        <div className="editor-nav-top"><button className="back-button" onClick={onBack}><ChevronLeft size={17} />{t("editor.library")}</button><button className="icon-button" onClick={() => setNavOpen(false)}><PanelLeftClose size={17} /></button></div>
+        <div className="editor-nav-top"><button className="back-button" onClick={() => void leaveEditor()}><ChevronLeft size={17} />{t("editor.library")}</button><button className="icon-button" onClick={() => setNavOpen(false)}><PanelLeftClose size={17} /></button></div>
         <div className="mini-brand"><span className="brand-mark"><Sparkles size={14} /></span>AI Tip</div>
         <button className="outline-toggle" onClick={() => setOutlineOpen(!outlineOpen)}><span>{t("editor.outline")}</span><ChevronDown size={15} className={outlineOpen ? "" : "rotated"} /></button>
         {outlineOpen && <nav className="outline">{outline.map((item) => <button key={item.id} className={`level-${item.level || 2}`} onClick={() => document.querySelector(`[data-block-row="${item.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>{item.content || t("editor.untitledHeading")}</button>)}</nav>}

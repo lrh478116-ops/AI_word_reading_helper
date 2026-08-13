@@ -11,7 +11,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { lookup } from "node:dns/promises";
-import type { AiSettings, AiSettingsInput, ApiProvider, DocumentBlock, DocumentItem, SkillTrace, TipMessage, TipThread, User } from "../src/types.js";
+import type { AiSettings, AiSettingsInput, ApiProvider, DocumentBlock, DocumentItem, PdfTableData, SkillTrace, TipMessage, TipThread, User } from "../src/types.js";
 import { collectTipSubtreeIds, plainMessageContent } from "../src/tip-tree.js";
 import { CORRECTNESS_RULES, DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, normalizePromptLanguage, resolveSystemPrompt, type PromptLanguage } from "../src/prompts.js";
 import { PROVIDER_REGISTRY, migrateProviderPreset, providerDefinition } from "../src/providers.js";
@@ -200,6 +200,41 @@ async function writeDb(db: Database) {
 function block(documentId: string, type: DocumentBlock["type"], content: string, order: number, level?: number): DocumentBlock {
   const timestamp = now();
   return { id: makeId(), documentId, type, content, order, level, contentHash: hash(content), createdAt: timestamp, updatedAt: timestamp };
+}
+
+const documentBlockTypes = new Set<DocumentBlock["type"]>(["heading", "paragraph", "list_item", "quote", "code", "table", "image"]);
+const maxTableRows = 500;
+const maxTableCellsPerRow = 100;
+const maxTableCellLength = 10_000;
+
+function tableContent(rows: string[][]) {
+  return rows.map((row) => row.join("\t")).join("\n");
+}
+
+function normalizeTableData(value: unknown): PdfTableData {
+  if (!value || typeof value !== "object" || !Array.isArray((value as { rows?: unknown }).rows)) throw new Error("表格结构缺失或 rows 不是数组");
+  const raw = value as { rows: unknown[]; headerRows?: unknown; cells?: unknown; source?: unknown };
+  if (raw.rows.length > maxTableRows) throw new Error(`表格行数不能超过 ${maxTableRows}`);
+  const rows = raw.rows.map((rawRow, rowIndex) => {
+    if (!Array.isArray(rawRow)) throw new Error(`表格第 ${rowIndex + 1} 行不是单元格数组`);
+    if (rawRow.length > maxTableCellsPerRow) throw new Error(`表格每行不能超过 ${maxTableCellsPerRow} 个单元格`);
+    return rawRow.map((rawCell, cellIndex) => {
+      if (!["string", "number", "boolean"].includes(typeof rawCell)) throw new Error(`表格第 ${rowIndex + 1} 行第 ${cellIndex + 1} 个单元格不是文本`);
+      return String(rawCell).slice(0, maxTableCellLength);
+    });
+  });
+  const requestedHeaderRows = Number(raw.headerRows);
+  const headerRows = Number.isFinite(requestedHeaderRows) ? Math.max(0, Math.min(rows.length, Math.trunc(requestedHeaderRows))) : 0;
+  const rawCells = Array.isArray(raw.cells) ? raw.cells : [];
+  const cells = rows.map((row, rowIndex) => row.map((content, cellIndex) => {
+    const candidate = Array.isArray(rawCells[rowIndex]) && rawCells[rowIndex][cellIndex] && typeof rawCells[rowIndex][cellIndex] === "object"
+      ? rawCells[rowIndex][cellIndex] as { header?: unknown; colSpan?: unknown; rowSpan?: unknown }
+      : {};
+    const colSpan = Math.max(1, Math.min(maxTableCellsPerRow, Math.trunc(Number(candidate.colSpan) || 1)));
+    const rowSpan = Math.max(1, Math.min(maxTableRows, Math.trunc(Number(candidate.rowSpan) || 1)));
+    return { content, header: typeof candidate.header === "boolean" ? candidate.header : rowIndex < headerRows, colSpan, rowSpan };
+  }));
+  return { rows, headerRows, cells, source: raw.source === "pdf" ? "pdf" : "docx" };
 }
 
 const legacyTransformerSeedBlocks: Array<Pick<DocumentBlock, "type" | "content" | "level">> = [
@@ -677,9 +712,37 @@ app.patch("/api/documents/:id", auth, async (req: AuthedRequest, res) => {
   if (typeof body.favorite === "boolean") document.favorite = body.favorite;
   if (body.status === "active" || body.status === "deleted") document.status = body.status;
   if (Array.isArray(body.blocks)) {
-    document.blocks = body.blocks.slice(0, 2000).map((item, order) => ({
-      ...item, documentId: document.id, order, content: String(item.content).slice(0, 100_000), contentHash: hash(String(item.content)), updatedAt: now()
-    }));
+    try {
+      const previousBlocks = new Map(document.blocks.map((item) => [item.id, item]));
+      document.blocks = body.blocks.slice(0, 2000).map((item, order) => {
+        if (!item || typeof item !== "object" || !documentBlockTypes.has(item.type)) throw new Error(`第 ${order + 1} 个文档块类型无效`);
+        const previous = typeof item.id === "string" ? previousBlocks.get(item.id) : undefined;
+        const id = previous?.id || (typeof item.id === "string" && item.id.length <= 160 ? item.id : makeId());
+        let content = String(item.content ?? "").slice(0, 100_000);
+        let table: PdfTableData | undefined;
+        if (item.type === "table") {
+          table = normalizeTableData(item.table);
+          content = tableContent(table.rows).slice(0, 100_000);
+        }
+        const timestamp = now();
+        const normalized: DocumentBlock = {
+          id,
+          documentId: document.id,
+          type: item.type,
+          content,
+          order,
+          level: item.type === "heading" ? Math.max(1, Math.min(6, Math.trunc(Number(item.level) || 2))) : undefined,
+          contentHash: hash(content),
+          createdAt: previous?.createdAt || timestamp,
+          updatedAt: timestamp
+        };
+        if (table) normalized.table = table;
+        if (previous?.pdf) normalized.pdf = previous.pdf;
+        return normalized;
+      });
+    } catch (error) {
+      return res.status(400).json({ error: `文档块保存失败：${error instanceof Error ? error.message : "结构无效"}` });
+    }
     const tips = db.tips.filter((tip) => tip.documentId === document.id && tip.userId === req.user!.id);
     recoverAnchors(document, tips);
   }
@@ -723,20 +786,119 @@ function markdownTokensToBlocks(documentId: string, tokens: Token[]): DocumentBl
   return result.length ? result : [block(documentId, "paragraph", "", 0)];
 }
 
-function htmlToBlocks(documentId: string, html: string): DocumentBlock[] {
-  const result: DocumentBlock[] = [];
-  const clean = (value: string) => value
-    .replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
-  const matches = html.matchAll(/<(h[1-6]|p|li|blockquote|pre)[^>]*>([\s\S]*?)<\/\1>/gi);
-  for (const match of matches) {
-    const tag = match[1].toLowerCase();
-    const content = clean(match[2]);
-    if (!content) continue;
-    const type: DocumentBlock["type"] = tag.startsWith("h") ? "heading" : tag === "li" ? "list_item" : tag === "blockquote" ? "quote" : tag === "pre" ? "code" : "paragraph";
-    result.push(block(documentId, type, content, result.length, tag.startsWith("h") ? Number(tag[1]) : undefined));
+interface ImportedHtmlNode {
+  tag: string;
+  attributes: Record<string, string>;
+  children: Array<ImportedHtmlNode | string>;
+}
+
+function decodeHtmlText(value: string) {
+  return value.replace(/&(#x[\da-f]+|#\d+|nbsp|amp|lt|gt|quot|apos);/gi, (entity, name: string) => {
+    const normalized = name.toLowerCase();
+    if (normalized === "nbsp") return " ";
+    if (normalized === "amp") return "&";
+    if (normalized === "lt") return "<";
+    if (normalized === "gt") return ">";
+    if (normalized === "quot") return '"';
+    if (normalized === "apos") return "'";
+    const codePoint = normalized.startsWith("#x") ? Number.parseInt(normalized.slice(2), 16) : Number.parseInt(normalized.slice(1), 10);
+    return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
+  });
+}
+
+function parseImportedHtml(html: string) {
+  const root: ImportedHtmlNode = { tag: "#root", attributes: {}, children: [] };
+  const stack = [root];
+  const voidTags = new Set(["br", "hr", "img", "meta", "link", "input"]);
+  for (const tokenMatch of html.matchAll(/<!--[\s\S]*?-->|<![^>]*>|<[^>]+>|[^<]+/g)) {
+    const token = tokenMatch[0];
+    if (!token.startsWith("<")) { stack[stack.length - 1].children.push(token); continue; }
+    if (/^<!--|^<!/i.test(token)) continue;
+    const closing = token.match(/^<\s*\/\s*([\w:-]+)/);
+    if (closing) {
+      const tag = closing[1].toLowerCase();
+      while (stack.length > 1) {
+        const current = stack.pop()!;
+        if (current.tag === tag) break;
+      }
+      continue;
+    }
+    const opening = token.match(/^<\s*([\w:-]+)/);
+    if (!opening) continue;
+    const tag = opening[1].toLowerCase();
+    const attributes: Record<string, string> = {};
+    const attributeText = token.slice(opening[0].length, token.length - (token.endsWith("/>") ? 2 : 1));
+    for (const attribute of attributeText.matchAll(/([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)) {
+      attributes[attribute[1].toLowerCase()] = decodeHtmlText(attribute[2] ?? attribute[3] ?? attribute[4] ?? "");
+    }
+    const node: ImportedHtmlNode = { tag, attributes, children: [] };
+    stack[stack.length - 1].children.push(node);
+    if (!voidTags.has(tag) && !token.endsWith("/>")) stack.push(node);
   }
-  return result.length ? result : [block(documentId, "paragraph", clean(html), 0)];
+  return root;
+}
+
+function importedNodeText(node: ImportedHtmlNode): string {
+  let result = "";
+  node.children.forEach((child, index) => {
+    if (typeof child === "string") { result += decodeHtmlText(child); return; }
+    if (child.tag === "br") { result += "\n"; return; }
+    const nested = importedNodeText(child);
+    if (index > 0 && ["p", "div", "li"].includes(child.tag) && result && !result.endsWith("\n")) result += "\n";
+    result += nested;
+  });
+  return result.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+}
+
+function importedTableRows(tableNode: ImportedHtmlNode) {
+  const rows: ImportedHtmlNode[] = [];
+  const visit = (node: ImportedHtmlNode) => {
+    for (const child of node.children) {
+      if (typeof child === "string") continue;
+      if (child.tag === "table") continue;
+      if (child.tag === "tr") rows.push(child);
+      else visit(child);
+    }
+  };
+  visit({ ...tableNode, tag: "#table-root" });
+  return rows;
+}
+
+export function htmlToBlocks(documentId: string, html: string): DocumentBlock[] {
+  const result: DocumentBlock[] = [];
+  const root = parseImportedHtml(html);
+  const append = (node: ImportedHtmlNode) => {
+    if (node.tag === "table") {
+      const tableRows = importedTableRows(node).map((row) => row.children.filter((child): child is ImportedHtmlNode => typeof child !== "string" && (child.tag === "td" || child.tag === "th")));
+      if (!tableRows.length) return;
+      const rows = tableRows.map((row) => row.map((cell) => importedNodeText(cell)));
+      const cells = tableRows.map((row) => row.map((cell) => ({
+        content: importedNodeText(cell),
+        header: cell.tag === "th",
+        colSpan: Math.max(1, Math.min(maxTableCellsPerRow, Number.parseInt(cell.attributes.colspan || "1", 10) || 1)),
+        rowSpan: Math.max(1, Math.min(maxTableRows, Number.parseInt(cell.attributes.rowspan || "1", 10) || 1))
+      })));
+      let headerRows = 0;
+      while (headerRows < cells.length && cells[headerRows].length > 0 && cells[headerRows].every((cell) => cell.header)) headerRows += 1;
+      const item = block(documentId, "table", tableContent(rows), result.length);
+      item.table = { rows, headerRows, cells, source: "docx" };
+      result.push(item);
+      return;
+    }
+    const supported = /^(h[1-6]|p|li|blockquote|pre)$/.test(node.tag);
+    if (supported) {
+      const content = importedNodeText(node);
+      if (!content) return;
+      const type: DocumentBlock["type"] = node.tag.startsWith("h") ? "heading" : node.tag === "li" ? "list_item" : node.tag === "blockquote" ? "quote" : node.tag === "pre" ? "code" : "paragraph";
+      result.push(block(documentId, type, content, result.length, node.tag.startsWith("h") ? Number(node.tag[1]) : undefined));
+      return;
+    }
+    for (const child of node.children) if (typeof child !== "string") append(child);
+  };
+  append(root);
+  if (result.length) return result;
+  const fallback = importedNodeText(root);
+  return [block(documentId, "paragraph", fallback, 0)];
 }
 
 app.post("/api/documents/import", auth, upload.single("file"), async (req: AuthedRequest, res) => {

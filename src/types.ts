@@ -10,9 +10,18 @@ export interface PdfBlockSource {
   confidence: number;
 }
 
+export interface DocumentTableCell {
+  content: string;
+  header?: boolean;
+  colSpan?: number;
+  rowSpan?: number;
+}
+
 export interface PdfTableData {
   rows: string[][];
   headerRows: number;
+  cells?: DocumentTableCell[][];
+  source?: "pdf" | "docx";
 }
 
 export interface PdfPageTextItem {

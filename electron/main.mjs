@@ -87,11 +87,17 @@ async function createWindow() {
     const pdfFixtureBase64 = existsSync(pdfFixturePath) ? readFileSync(pdfFixturePath, "utf8").replace(/\s+/g, "") : "";
     const ocrPdfFixturePath = path.join(appRoot, "scripts", "fixtures", "scanned-pdf.pdf.base64");
     const ocrPdfFixtureBase64 = existsSync(ocrPdfFixturePath) ? readFileSync(ocrPdfFixturePath, "utf8").replace(/\s+/g, "") : "";
-    if (!pdfFixtureBase64 || !ocrPdfFixtureBase64) throw new Error("桌面验收所需的 PDF 测试文件缺失");
+    const docxFixturePath = path.join(appRoot, "node_modules", "mammoth", "test", "test-data", "tables.docx");
+    const packagedDocxFixturePath = path.join(appRoot, "scripts", "fixtures", "word-table.docx.base64");
+    const docxFixtureBase64 = existsSync(docxFixturePath)
+      ? readFileSync(docxFixturePath).toString("base64")
+      : existsSync(packagedDocxFixturePath) ? readFileSync(packagedDocxFixturePath, "utf8").replace(/\s+/g, "") : "";
+    if (!pdfFixtureBase64 || !ocrPdfFixtureBase64 || !docxFixtureBase64) throw new Error("桌面验收所需的 PDF/DOCX 测试文件缺失");
     let productBehavior;
     try { productBehavior = await mainWindow.webContents.executeJavaScript(`(async () => {
       const pdfFixtureBase64 = ${JSON.stringify(pdfFixtureBase64)};
       const ocrPdfFixtureBase64 = ${JSON.stringify(ocrPdfFixtureBase64)};
+      const docxFixtureBase64 = ${JSON.stringify(docxFixtureBase64)};
       const capturePdfCanvas = ${JSON.stringify(Boolean(process.env.AI_TIP_PDF_SCREENSHOT_PATH))};
       const waitFor = async (selector, timeout = 5000) => {
         const started = Date.now();
@@ -220,6 +226,53 @@ async function createWindow() {
       const importedDropDocument = await originalFetch('/api/documents/' + importedId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
       if (savedSource.document.title !== '拖放前必须保存的标题' || savedSource.document.blocks[0]?.content !== '这段最新修改必须在上传新文档前持久化。' || importedDropDocument.document.sourceType !== 'markdown' || !importedDropDocument.document.blocks.some(block => block.content.includes('Imported from the settings overlay.'))) throw new Error('拖放导入没有保证原文档保存或新文档解析');
       if (importTrace.indexOf('PATCH:done') < 0 || importTrace.indexOf('IMPORT:start') < importTrace.indexOf('PATCH:done') || document.querySelector('.settings-modal')) throw new Error('拖放事务顺序不是保存完成后再上传，或成功后未显示新文档');
+      window.__desktopSmokeStep = 'back save gate';
+      const importedEditable = await waitFor('[contenteditable][data-block-id]');
+      importedEditable.innerText = '返回文档库前必须保存的最后修改。';
+      importedEditable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: importedEditable.innerText }));
+      let failBackSave = true;
+      window.fetch = async (input, init = {}) => {
+        const url = String(input instanceof Request ? input.url : input); const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+        if (failBackSave && url.includes('/api/documents/' + importedId) && method === 'PATCH') { failBackSave = false; throw new Error('injected back-save failure'); }
+        return originalFetch(input, init);
+      };
+      document.querySelector('.back-button').click();
+      await new Promise(resolve => setTimeout(resolve, 140));
+      if (document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') !== importedId || !document.querySelector('.save-state.error')) throw new Error('返回文档库绕过了保存失败门禁');
+      window.fetch = originalFetch;
+      document.querySelector('.back-button').click();
+      await waitFor('.app-nav');
+      const savedBeforeBack = await originalFetch('/api/documents/' + importedId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+      if (savedBeforeBack.document.blocks[0]?.content !== '返回文档库前必须保存的最后修改。') throw new Error('返回文档库前没有持久化最后编辑');
+
+      window.__desktopSmokeStep = 'word table direct edit';
+      const docxBinary = atob(docxFixtureBase64); const docxBytes = new Uint8Array(docxBinary.length);
+      for (let index = 0; index < docxBinary.length; index++) docxBytes[index] = docxBinary.charCodeAt(index);
+      const docxTransfer = new DataTransfer();
+      docxTransfer.items.add(new File([docxBytes], 'word-table.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+      const docxInput = document.querySelector('[data-global-document-input]'); docxInput.files = docxTransfer.files;
+      docxInput.dispatchEvent(new Event('change', { bubbles: true }));
+      const docxEditor = await waitUntil(() => { const editor = document.querySelector('[data-editor-document]'); return editor?.getAttribute('data-editor-document') !== importedId ? editor : null; }, 'DOCX import opens editor');
+      const docxDocumentId = docxEditor.getAttribute('data-editor-document');
+      const wordTable = await waitFor('table[data-word-table]');
+      const editableCells = wordTable.querySelectorAll('th[contenteditable], td[contenteditable]');
+      if (editableCells.length !== 4 || editableCells[0].textContent !== 'Top left' || editableCells[3].textContent !== 'Bottom right') throw new Error('Word 表格没有按两行两列可编辑结构显示');
+      const addControls = [...document.querySelectorAll('.add-block-row button')].map(button => button.textContent.trim());
+      if (addControls.length !== 4 || !addControls.some(text => text.includes('添加段落')) || !addControls.some(text => text.includes('标题')) || !addControls.some(text => text.includes('代码')) || !addControls.some(text => text.includes('引用'))) throw new Error('直接编辑修复误删了四个结构化添加入口');
+      editableCells[3].innerText = 'Bottom right desktop saved';
+      editableCells[3].dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: editableCells[3].innerText }));
+      document.querySelector('.editor-controls .secondary.compact').click();
+      await waitUntil(() => document.querySelector('.save-state')?.textContent?.includes('已保存'), 'Word table manual save');
+      const savedDocx = await originalFetch('/api/documents/' + docxDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
+      const savedWordTable = savedDocx.document.blocks.find(block => block.type === 'table');
+      if (savedWordTable?.table?.rows?.[1]?.[1] !== 'Bottom right desktop saved' || !savedWordTable.content.includes('Bottom right desktop saved')) throw new Error('Word 单元格编辑没有进入正式保存数据');
+      document.querySelector('.back-button').click();
+      await waitFor('.app-nav');
+      const docxCard = await waitUntil(() => [...document.querySelectorAll('.document-card')].find(card => card.querySelector('h3')?.textContent === 'word-table'), 'Word document library card');
+      docxCard.click();
+      await waitUntil(() => document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') === docxDocumentId, 'reopen saved Word document');
+      const reopenedLastCell = await waitFor('table[data-word-table] tr:last-child td:last-child[contenteditable], table[data-word-table] tr:last-child th:last-child[contenteditable]');
+      if (reopenedLastCell.textContent !== 'Bottom right desktop saved') throw new Error('重新打开后 Word 表格单元格编辑丢失');
       document.querySelector('.back-button').click();
       await waitFor('.app-nav');
       let pdfVisual = false;
@@ -421,7 +474,7 @@ async function createWindow() {
       document.querySelector('.logout-button').click();
       await waitFor('.auth-shell');
       if (localStorage.getItem('ai-tip-token') !== null) throw new Error('退出登录没有清除正式会话');
-      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, emptyImportDefault: true, globalDropImport: true, unsupportedDropBlocked: true, saveFailureBlocked: true, saveBeforeDropUpload: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
+      return { localEntry: true, languageShared: true, englishDefaultPrompt: true, feedbackFailurePreserved: true, recipientHidden: true, transformerRemoved: true, emptyImportDefault: true, globalDropImport: true, unsupportedDropBlocked: true, saveFailureBlocked: true, saveBeforeDropUpload: true, backSaveFailureBlocked: true, saveBeforeBack: true, wordTableDirectEdit: true, wordTableSaveRoundTrip: true, addBlockControlsPreserved: true, pdfVisual, pdfOriginalTipSelection: true, pdfTipOverlayReopen: true, pdfTipOpenLayoutStable: true, pdfTipOpenLayoutMaxDelta, offlineOcr: true, ocrTipAuthority: true, ocrLayoutStable: true, ocrLayoutMaxDelta, pdfCanvasDataUrl, pdfSecondCanvasDataUrl, nestedTipSelection: true, recursiveLayout: true, treeRename: true, collapseRestored: true, logoutCleared: true };
     })()`); }
     catch (error) {
       const diagnostic = await mainWindow.webContents.executeJavaScript("({ step: window.__desktopSmokeStep || 'unknown', text: document.body.innerText.slice(-700), importError: document.querySelector('[data-import-error]')?.textContent || '', editor: document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') || '' })").catch(() => ({}));

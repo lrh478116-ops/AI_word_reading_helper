@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 process.env.AI_TIP_EMBEDDED = "1";
+const integrationDataDir = await mkdtemp(path.join(tmpdir(), "ai-tip-docx-table-test-"));
+process.env.AI_TIP_DATA_DIR = integrationDataDir;
 
 const {
   DEFAULT_SYSTEM_PROMPTS,
@@ -9,8 +13,10 @@ const {
   defaultPromptForLanguage,
   extractPdfStructure,
   hasValidPdfContainer,
+  htmlToBlocks,
   repairImportedDocumentNames,
-  resolveSystemPrompt
+  resolveSystemPrompt,
+  startServer
 } = await import("../dist-electron/server.cjs");
 
 const chineseName = "实习进度1.pdf";
@@ -56,4 +62,80 @@ if (!image?.pdf?.bbox || image.pdf.page !== 1 || image.pdf.operationIndex == nul
 if (semantic.blocks.some((item) => item.type === "table" && item.content.includes("两列普通文字"))) throw new Error("普通两列段落被误判为表格");
 if (semantic.blocks.some((item) => item.content.includes("�"))) throw new Error("PDF 语义块含替换字符乱码");
 
-console.log(JSON.stringify({ filenameUtf8: true, legacyTitleMigration: true, bilingualDefaultPrompt: true, pdfFixtureBytes: fixture.length, pdfSemanticBlocks: semantic.blocks.length, pdfSemanticTypes: [...semanticTypes] }));
+const structuredWordBlocks = htmlToBlocks("word-structure-component", "<p>表格之前</p><table><tr><th colspan=\"2\">中文表头</th></tr><tr><td rowspan=\"2\">合并单元格</td><td><p>第一行</p><p>第二行</p></td></tr><tr><td>末行</td></tr></table><p>表格之后</p>");
+const structuredWordTable = structuredWordBlocks[1];
+if (JSON.stringify(structuredWordBlocks.map((item) => item.type)) !== JSON.stringify(["paragraph", "table", "paragraph"])) throw new Error("Word HTML 表格的文档顺序没有保留");
+if (structuredWordTable.table?.cells?.[0]?.[0]?.colSpan !== 2 || structuredWordTable.table.cells[1]?.[0]?.rowSpan !== 2 || structuredWordTable.table.rows[1]?.[1] !== "第一行\n第二行") throw new Error("Word 表头、合并单元格或单元格内多段文本没有保留");
+if (structuredWordTable.content.includes("�") || structuredWordTable.table.rows[0]?.[0] !== "中文表头") throw new Error("Word 表格中文内容发生乱码");
+
+let server;
+let docxTableIntegration = false;
+let docxTableSaveRoundTrip = false;
+let staleTableContentRejected = false;
+let malformedTableRejected = false;
+try {
+  server = await startServer(0, "127.0.0.1");
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("DOCX 表格测试服务没有监听 TCP 端口");
+  const baseURL = `http://127.0.0.1:${address.port}/api`;
+  const loginResponse = await fetch(`${baseURL}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: "demo@aitip.local", password: "demo1234" })
+  });
+  if (!loginResponse.ok) throw new Error(`DOCX 表格测试登录失败：${loginResponse.status}`);
+  const { token } = await loginResponse.json();
+  const headers = { Authorization: `Bearer ${token}` };
+  const docxBytes = await readFile(new URL("../node_modules/mammoth/test/test-data/tables.docx", import.meta.url));
+  const form = new FormData();
+  form.append("file", new Blob([docxBytes], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }), "tables.docx");
+  const importResponse = await fetch(`${baseURL}/documents/import`, { method: "POST", headers, body: form });
+  const imported = await importResponse.json();
+  if (!importResponse.ok) throw new Error(`真实 DOCX 表格导入失败：${imported.error || importResponse.status}`);
+  const importedTypes = imported.document.blocks.map((item) => item.type);
+  const importedTable = imported.document.blocks.find((item) => item.type === "table");
+  if (JSON.stringify(importedTypes) !== JSON.stringify(["paragraph", "table", "paragraph"])) throw new Error(`DOCX 表格没有保留原始块顺序：${JSON.stringify(importedTypes)}`);
+  if (JSON.stringify(importedTable?.table?.rows) !== JSON.stringify([["Top left", "Top right"], ["Bottom left", "Bottom right"]])) throw new Error("DOCX 表格没有形成两行两列结构");
+  if (imported.document.blocks.some((item) => item.type === "paragraph" && /Top left|Top right|Bottom left|Bottom right/.test(item.content))) throw new Error("DOCX 表格单元格又被重复生成为伪段落");
+  docxTableIntegration = true;
+
+  const editedRows = importedTable.table.rows.map((row) => [...row]);
+  editedRows[1][1] = "Bottom right edited and persisted";
+  const staleContent = importedTable.content;
+  const editedBlocks = imported.document.blocks.map((item) => item.id === importedTable.id
+    ? { ...item, content: staleContent, table: { ...item.table, rows: editedRows } }
+    : item);
+  const saveResponse = await fetch(`${baseURL}/documents/${imported.document.id}`, {
+    method: "PATCH",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ blocks: editedBlocks })
+  });
+  const saved = await saveResponse.json();
+  if (!saveResponse.ok) throw new Error(`DOCX 表格保存失败：${saved.error || saveResponse.status}`);
+  const savedTable = saved.document.blocks.find((item) => item.id === importedTable.id);
+  if (savedTable?.table?.rows?.[1]?.[1] !== "Bottom right edited and persisted") throw new Error("PATCH 没有消费修改后的表格结构");
+  if (!savedTable.content.includes("Bottom right edited and persisted") || savedTable.content === staleContent) throw new Error("服务端沿用了 stale content，没有从表格结构派生正式内容");
+  staleTableContentRejected = true;
+  const reopenResponse = await fetch(`${baseURL}/documents/${imported.document.id}`, { headers });
+  const reopened = await reopenResponse.json();
+  const reopenedTable = reopened.document?.blocks?.find((item) => item.id === importedTable.id);
+  if (!reopenResponse.ok || reopenedTable?.table?.rows?.[1]?.[1] !== "Bottom right edited and persisted" || reopenedTable.content !== savedTable.content) throw new Error("表格编辑没有在重新打开文档后保持一致");
+  docxTableSaveRoundTrip = true;
+  const malformedBlocks = reopened.document.blocks.map((item) => item.id === importedTable.id
+    ? { ...item, table: { rows: "fabricated replacement", headerRows: 0 } }
+    : item);
+  const malformedResponse = await fetch(`${baseURL}/documents/${imported.document.id}`, {
+    method: "PATCH",
+    headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ blocks: malformedBlocks })
+  });
+  if (malformedResponse.status !== 400) throw new Error(`畸形表格结构没有被明确拒绝：${malformedResponse.status}`);
+  const afterMalformed = await fetch(`${baseURL}/documents/${imported.document.id}`, { headers }).then((response) => response.json());
+  if (afterMalformed.document.blocks.find((item) => item.id === importedTable.id)?.table?.rows?.[1]?.[1] !== "Bottom right edited and persisted") throw new Error("畸形替换破坏了此前保存的表格");
+  malformedTableRejected = true;
+} finally {
+  if (server) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  await rm(integrationDataDir, { recursive: true, force: true });
+}
+
+console.log(JSON.stringify({ filenameUtf8: true, legacyTitleMigration: true, bilingualDefaultPrompt: true, pdfFixtureBytes: fixture.length, pdfSemanticBlocks: semantic.blocks.length, pdfSemanticTypes: [...semanticTypes], docxTableIntegration, docxTableSaveRoundTrip, staleTableContentRejected, malformedTableRejected }));
