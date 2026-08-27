@@ -9,6 +9,21 @@ export function plainMessageContent(content: string) {
   return content.replace(/\r\n?/g, "\n").replace(/\*\*([^*]+)\*\*/g, "$1");
 }
 
+export function httpLinkRanges(content: string) {
+  const ranges: Array<{ start: number; end: number; url: string }> = [];
+  for (const match of content.matchAll(/https?:\/\/[^\s<>"'`，。！？；：、（）【】]+/gi)) {
+    const start = match.index || 0;
+    const visible = match[0].replace(/[),.;!?]+$/g, "");
+    if (!visible) continue;
+    try {
+      const parsed = new URL(visible);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue;
+      ranges.push({ start, end: start + visible.length, url: parsed.toString() });
+    } catch { /* Ignore malformed or unsupported links and keep them as plain text. */ }
+  }
+  return ranges;
+}
+
 export function buildTipPath(tips: TipThread[], activeTipId: string | null) {
   if (!activeTipId) return [];
   const byId = new Map(tips.map((tip) => [tip.id, tip]));

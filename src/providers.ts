@@ -1,7 +1,7 @@
 import type { ApiProvider } from "./types.js";
 
-export const PROVIDER_REGISTRY_VERSION = 2;
-export const PROVIDER_REGISTRY_VERIFIED_AT = "2026-08-13";
+export const PROVIDER_REGISTRY_VERSION = 3;
+export const PROVIDER_REGISTRY_VERIFIED_AT = "2026-08-21";
 
 export interface ProviderDefinition {
   id: ApiProvider;
@@ -39,6 +39,10 @@ export const PROVIDER_REGISTRY: Record<ApiProvider, ProviderDefinition> = {
     id: "gemini", labelKey: "provider.gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", defaultModel: "gemini-3.6-flash",
     legacyDefaultModels: ["gemini-2.5-flash"], retiredModels: [], supportsModelList: true, local: false
   },
+  local: {
+    id: "local", labelKey: "provider.local", baseURL: "http://127.0.0.1:8080/v1", defaultModel: "aitip:local-gguf",
+    legacyDefaultModels: [], retiredModels: [], supportsModelList: true, local: true
+  },
   ollama: {
     id: "ollama", labelKey: "provider.ollama", baseURL: "http://127.0.0.1:11434/v1", defaultModel: "qwen3.5:9b",
     legacyDefaultModels: ["qwen3:8b"], retiredModels: [], supportsModelList: true, local: true
@@ -55,7 +59,7 @@ export function providerDefinition(value: unknown): ProviderDefinition {
 
 export function migrateProviderPreset(input: { provider: ApiProvider; baseURL: string; model: string }) {
   const definition = providerDefinition(input.provider);
-  if (input.provider === "custom" || input.provider === "ollama") return { ...input, changed: false };
+  if (input.provider === "custom" || input.provider === "local" || input.provider === "ollama") return { ...input, changed: false };
   const normalizedBaseURL = String(input.baseURL || "").replace(/\/+$/, "");
   const builtInURL = definition.baseURL.replace(/\/+$/, "");
   if (normalizedBaseURL !== builtInURL || !definition.legacyDefaultModels.includes(input.model)) return { ...input, changed: false };

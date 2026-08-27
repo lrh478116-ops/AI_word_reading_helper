@@ -1,5 +1,6 @@
 import { PDFDocument, PDFHexString, PDFName, PDFSignature, PDFString } from "pdf-lib";
 import type { DocumentItem, PdfNormalizedRect, PdfTipAnchor, TipThread } from "../src/types.js";
+import { plainMessageContent } from "../src/tip-tree.js";
 
 export const PDF_TIP_ANCHOR_VERSION = 1;
 
@@ -32,7 +33,7 @@ function rectToPdf(rect: PdfNormalizedRect, viewBox: [number, number, number, nu
   return { x1, y1, x2: x1 + rect.width * width, y2: y1 + rect.height * height };
 }
 
-export async function createAnnotatedPdfCopy(bytes: Uint8Array, tips: Array<Pick<TipThread, "id" | "title" | "selectedText" | "summary" | "pdfAnchor">>) {
+export async function createAnnotatedPdfCopy(bytes: Uint8Array, tips: Array<Pick<TipThread, "id" | "title" | "selectedText" | "messages" | "pdfAnchor">>) {
   const document = await PDFDocument.load(bytes, { updateMetadata: false });
   if (document.getForm().getFields().some((field) => field instanceof PDFSignature)) {
     throw new Error("检测到 PDF 数字签名字段。为避免让签名失效，不能生成批注副本");
@@ -42,20 +43,23 @@ export async function createAnnotatedPdfCopy(bytes: Uint8Array, tips: Array<Pick
     const anchor = tip.pdfAnchor; if (!anchor || anchor.pageNumber < 1 || anchor.pageNumber > pages.length) continue;
     const page = pages[anchor.pageNumber - 1]; const viewBox = page.getMediaBox();
     const box: [number, number, number, number] = [viewBox.x, viewBox.y, viewBox.x + viewBox.width, viewBox.y + viewBox.height];
-    const note = `AI Tip ID: ${tip.id}\n${tip.title}\n${tip.selectedText.slice(0, 500)}${tip.summary ? `\n${tip.summary.slice(0, 500)}` : ""}`;
+    const firstAnswer = tip.messages.find((message) => message.role === "assistant")?.content || "";
+    const answerText = firstAnswer ? plainMessageContent(firstAnswer) : "（尚无 AI 回答）";
+    const note = `AI Tip ID: ${tip.id}\n标题：${tip.title}\n选中文字：\n${tip.selectedText}\n第一条回答：\n${answerText}`;
+    const noteContents = document.context.register(PDFHexString.fromText(note));
     anchor.rects.forEach((rect, index) => {
       const { x1, y1, x2, y2 } = rectToPdf(rect, box);
       const annotation = document.context.obj({
         Type: "Annot", Subtype: "Highlight", Rect: [x1, y1, x2, y2],
         QuadPoints: [x1, y2, x2, y2, x1, y1, x2, y1], C: [1, 0.78, 0.18], CA: 0.34, F: 4,
-        T: PDFHexString.fromText("AI Tip"), Contents: PDFHexString.fromText(note), NM: PDFString.of(`aitip:${tip.id}:highlight:${index}`)
+        T: PDFHexString.fromText("AI Tip"), Contents: noteContents, NM: PDFString.of(`aitip:${tip.id}:highlight:${index}`)
       });
       page.node.addAnnot(document.context.register(annotation));
       if (index === 0) {
         const size = Math.max(14, Math.min(22, (y2 - y1) * 1.25));
         const textAnnotation = document.context.obj({
           Type: "Annot", Subtype: "Text", Rect: [x2, y2, x2 + size, y2 + size], Name: PDFName.of("Comment"), Open: false, F: 4,
-          T: PDFHexString.fromText("AI Tip"), Contents: PDFHexString.fromText(note), NM: PDFString.of(`aitip:${tip.id}:note`)
+          T: PDFHexString.fromText("AI Tip"), Contents: noteContents, NM: PDFString.of(`aitip:${tip.id}:note`)
         });
         page.node.addAnnot(document.context.register(textAnnotation));
       }

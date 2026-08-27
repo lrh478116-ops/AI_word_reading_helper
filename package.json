@@ -1,7 +1,7 @@
 {
   "name": "ai-tip-document-app",
   "private": true,
-  "version": "1.9.6",
+  "version": "1.12.10",
   "description": "面向深度阅读的本地 AI 文档与 Tip 对话应用",
   "author": "AI Tip",
   "type": "module",
@@ -17,7 +17,8 @@
     "desktop:dev": "pnpm desktop:prepare && concurrently -k -n web,desktop -c cyan,green \"vite\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs --dev\"",
     "desktop:start": "pnpm desktop:prepare && electron electron/main.mjs",
     "desktop:smoke": "pnpm desktop:prepare && electron electron/main.mjs --smoke-test",
-    "skills:test": "pnpm desktop:prepare && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-pdf-tip-anchors.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-skills-integration.mjs",
+    "search:live": "pnpm desktop:prepare && node scripts/test-live-reference-search.mjs",
+    "skills:test": "pnpm desktop:prepare && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-pdf-tip-anchors.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-login-credentials.mjs && node scripts/test-managed-ollama-runtime.mjs && node scripts/test-bundled-llama-runtime.mjs && node scripts/test-electron-model-download.mjs && node scripts/test-ollama-installer.mjs && node scripts/test-local-model-integration.mjs && node scripts/test-skills-integration.mjs && node scripts/test-supabase-integration.mjs",
     "desktop:dist:win": "pnpm desktop:prepare && electron-builder --win nsis --x64",
     "desktop:dist:mas": "pnpm desktop:prepare && electron-builder --mac mas --universal",
     "desktop:dist:mas-dev": "pnpm desktop:prepare && electron-builder --mac mas-dev --universal"
@@ -81,6 +82,9 @@
     ],
     "win": {
       "icon": "build/icon.png",
+      "extraResources": [
+        { "from": "runtime/llama.cpp/win-x64", "to": "llama.cpp/win-x64", "filter": ["**/*"] }
+      ],
       "target": [
         {
           "target": "nsis",
@@ -108,6 +112,14 @@
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "extraResources": [
+        { "from": "runtime/llama.cpp/mac-arm64", "to": "llama.cpp/mac-arm64", "filter": ["**/*"] },
+        { "from": "runtime/llama.cpp/mac-x64", "to": "llama.cpp/mac-x64", "filter": ["**/*"] }
+      ],
+      "binaries": [
+        "Contents/Resources/llama.cpp/mac-arm64/llama-server",
+        "Contents/Resources/llama.cpp/mac-x64/llama-server"
+      ],
       "entitlements": "build/entitlements.mas.plist",
       "entitlementsInherit": "build/entitlements.mas.inherit.plist"
     },

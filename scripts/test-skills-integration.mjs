@@ -2,20 +2,24 @@ import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import bcrypt from "bcryptjs";
+import { PDFDict, PDFDocument, PDFHexString, PDFName, PDFString } from "pdf-lib";
 import os from "node:os";
 import path from "node:path";
 
 const tempData = await mkdtemp(path.join(os.tmpdir(), "ai-tip-skills-"));
 const semanticPdfBytes = Buffer.from((await readFile(new URL("./fixtures/semantic-pdf.pdf.base64", import.meta.url), "utf8")).replace(/\s+/g, ""), "base64");
 process.env.AI_TIP_EMBEDDED = "1";
+process.env.AI_TIP_SUPABASE_ENABLED = "0";
 process.env.AI_TIP_DESKTOP = "1";
 process.env.AI_TIP_DATA_DIR = tempData;
 process.env.OPENAI_API_KEY = "publisher-key-must-not-be-used";
 let searchRequests = 0;
 const referenceSearchRequests = [];
 let modelAssessmentRequests = 0;
-const feedbackPayloads = [];
+let searchAssessmentRequests = 0;
+let configuredExternalFetchRequests = 0;
 const answerSystemPrompts = [];
+const answerToolNames = [];
 const chineseDefaultPrompt = "你是文档内的局部阅读助手。围绕用户选中的原文准确回答，先给结论，再解释机制，必要时举例。不要声称看到未提供的全文。使用清晰、专业的中文。";
 
 const legacyUserId = "legacy-demo-user";
@@ -128,19 +132,20 @@ const mock = createServer(async (req, res) => {
     res.end(JSON.stringify({ items: [{ title, url: urlValue, content: `${query} ${content}` }] }));
     return;
   }
-  if (req.url === "/feedback-relay") {
-    feedbackPayloads.push(JSON.parse(raw || "{}"));
-    res.statusCode = 202;
-    res.end(JSON.stringify({ accepted: true }));
-    return;
-  }
   const body = JSON.parse(raw || "{}");
   const messages = body.messages || [];
   const last = messages[messages.length - 1] || {};
   const toolResult = last.role === "tool" ? String(last.content || "") : "";
   const isProfessionalClassifier = messages.some((item) => item.role === "system" && String(item.content || "").includes("PROFESSIONALISM_CLASSIFIER_V1"));
+  const isSearchClassifier = messages.some((item) => item.role === "system" && String(item.content || "").includes("WEB_SEARCH_DECISION_V1"));
+  const isBinarySearchClassifier = messages.some((item) => item.role === "system" && String(item.content || "").includes("WEB_SEARCH_DECISION_BINARY_V1"));
+  const isSearchFailureRecovery = messages.some((item) => item.role === "system" && String(item.content || "").includes("SEARCH_FAILURE_DOCUMENT_RECOVERY_V1"));
+  const injectedSearchEvidence = messages.find((item) => item.role === "system" && /(?:强制联网证据|应用搜索计划取得的联网证据|本轮要求的联网搜索|Mandatory web evidence|Web evidence required by the application search plan|required web search returned)/i.test(String(item.content || "")))?.content || "";
+  const suppliedDocumentContext = String(messages.find((item) => item.role === "user" && /(?:选中原文|Selected source text)/i.test(String(item.content || "")))?.content || "");
+  const documentFallbackRequired = /(?:仍必须根据上方|must still answer the user's question from the document)/i.test(String(injectedSearchEvidence));
   const hasLengthPrefix = last.role === "user" && /(?:Continue exactly where|请严格从上一段回答被截断的位置继续)/i.test(String(last.content || "")) && String(messages.at(-2)?.content || "").includes("LONG_ANSWER_START");
   if (!isProfessionalClassifier && body.tools) answerSystemPrompts.push(String(messages.find((item) => item.role === "system")?.content || ""));
+  if (body.tools) answerToolNames.push(body.tools.map((tool) => String(tool?.function?.name || "")));
   let message;
   let finishReason = "stop";
   if (isProfessionalClassifier) {
@@ -153,8 +158,24 @@ const mock = createServer(async (req, res) => {
     } else {
       message = { role: "assistant", content: JSON.stringify({ professional: false, level: "general", domain: "通用", confidence: 88, requiresWebReview: false, reason: "未发现需要专业证据审查的复杂问题" }) };
     }
+  } else if (isSearchClassifier) {
+    searchAssessmentRequests += 1;
+    const assessmentInput = String(last.content || "");
+    if (assessmentInput.includes("WEB_SEARCH_DECISION_FAILURE")) {
+      message = { role: "assistant", content: "这不是合法的联网判断 JSON" };
+    } else if (assessmentInput.includes("WEB_SEARCH_DECISION_LOW")) {
+      message = { role: "assistant", content: JSON.stringify({ required: false, confidence: 0, reason: "无法可靠判断是否依赖外部事实", queryZh: "低置信度联网判断反事实", queryEn: "low confidence web decision counterfactual" }) };
+    } else {
+      const required = /(?:联网|最新|REFERENCE_|TAVILY_FAIL|双碳|RCU grace period|控制理论|药物剂量)/i.test(assessmentInput);
+      const counterfactualMarker = assessmentInput.match(/(?:REFERENCE_[A-Z_]+|TAVILY_FAIL)/i)?.[0] || "";
+      message = { role: "assistant", content: JSON.stringify({ required, confidence: 93, reason: required ? "可靠回答需要外部事实或专业证据" : "问题只需使用已给上下文", queryZh: required ? counterfactualMarker || assessmentInput.slice(0, 100) : "", queryEn: required ? counterfactualMarker || `external evidence ${assessmentInput.slice(0, 80)}` : "" }) };
+    }
+  } else if (isBinarySearchClassifier) {
+    message = { role: "assistant", content: String(last.content || "").includes("WEB_SEARCH_DECISION_FAILURE") ? "UNKNOWN" : "NO_SEARCH" };
   } else if (hasLengthPrefix) {
     message = { role: "assistant", content: `LONG_ANSWER_END：${"后半段内容".repeat(180)}` };
+  } else if (isSearchFailureRecovery) {
+    message = { role: "assistant", content: suppliedDocumentContext.includes("自注意力机制允许") ? "根据文档原文，自注意力机制允许序列中的 Token 按相关性聚合信息；这是对当前文档内容的解释，外部事实尚未通过本轮联网核验。" : "仍然无法回答。" };
   } else if (!body.tools) {
     const auditInput = String(last.content || "");
     message = { role: "assistant", content: auditInput.includes("UNSUPPORTED_CLAIM") ? "UNSUPPORTED: 该主张没有被提供的联网证据支持。" : "SUPPORTED: 回答中的结论与工具证据一致，并展示了来源。" };
@@ -171,6 +192,8 @@ const mock = createServer(async (req, res) => {
       message = { role: "assistant", content: "政策评估应同时核对正式目标、政策工具、执行主体与地区实施数据。[S1][S2]" };
     } else if (String(question).includes("专业错误审查")) {
       message = { role: "assistant", content: "UNSUPPORTED_CLAIM：该控制器在所有条件下都绝对稳定。[S1]" };
+    } else if (injectedSearchEvidence) {
+      message = { role: "assistant", content: String(injectedSearchEvidence).includes("REFERENCE_EVIDENCE") ? "根据备用参考检索，可以获得概览性信息。[S1]" : /没有取得可用的联网证据|未取得可用联网证据/.test(String(injectedSearchEvidence)) ? documentFallbackRequired ? "联网证据缺失，因此无法回答。" : "搜索失败，无法回答。" : "根据搜索来源，最新稳定版是 2.0。[S1]" };
     } else {
       const search = body.tool_choice?.function?.name === "web_search" || String(question).includes("最新");
       const searchQuery = String(question).includes("REFERENCE_") || String(question).includes("TAVILY_FAIL") ? String(question) : "产品最新稳定版本";
@@ -186,9 +209,12 @@ process.env.TAVILY_API_URL = `http://127.0.0.1:${mockPort}/search`;
 process.env.TAVILY_USAGE_URL = `http://127.0.0.1:${mockPort}/usage`;
 process.env.AI_TIP_REFERENCE_SEARCH_BASE_URL = `http://127.0.0.1:${mockPort}/reference`;
 process.env.AI_TIP_ALLOW_INSECURE_REFERENCE_SEARCH = "1";
-process.env.AI_TIP_FEEDBACK_RELAY_URL = `http://127.0.0.1:${mockPort}/feedback-relay`;
-process.env.AI_TIP_ALLOW_INSECURE_FEEDBACK_RELAY = "1";
-const { configureSecretProtection, startServer } = await import("../dist-electron/server.cjs");
+const { configureExternalNetworkFetch, configureSecretProtection, startServer } = await import("../dist-electron/server.cjs");
+configureExternalNetworkFetch(async (input, init) => {
+  const url = String(input);
+  if (url.includes(`/reference/`) || url.endsWith(`/search`) || url.endsWith(`/usage`)) configuredExternalFetchRequests += 1;
+  return fetch(input, init);
+});
 configureSecretProtection(
   (value) => Buffer.from(value, "utf8").toString("base64"),
   (value) => Buffer.from(value, "base64").toString("utf8")
@@ -215,6 +241,8 @@ async function chat(tipId, question, token, language) {
 try {
   const login = await request("/auth/login", { method: "POST", body: JSON.stringify({ email: "demo@aitip.local", password: "demo1234" }) });
   const token = login.token;
+  const defaultSearchSettings = await request("/settings", {}, token);
+  if (defaultSearchSettings.settings.webSearchEnabled !== false) throw new Error(`没有历史设置的用户未默认关闭联网搜索：${JSON.stringify(defaultSearchSettings.settings)}`);
   const migratedNames = await request("/documents", {}, token);
   const migratedNameDocument = migratedNames.documents.find((item) => item.id === "mojibake-document");
   const migratedPdfDocument = migratedNames.documents.find((item) => item.id === "legacy-pdf-document");
@@ -234,6 +262,10 @@ try {
   const depthOverflow = await fetch(`${base}/tips/deep-tip-32/children`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ messageId: "deep-source-32", selectedText: "deep", startOffset: 0, endOffset: 4, prefixText: "", suffixText: " anchor" }) });
   if (depthOverflow.status !== 409) throw new Error("正式子 Tip 创建接口没有拒绝第 33 层");
   await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchApiKey: "tvly-test", pythonEnabled: true }) }, token);
+  const chatToggleDisabled = await request("/settings", { method: "PUT", body: JSON.stringify({ webSearchEnabled: false, language: "zh-CN" }) }, token);
+  if (chatToggleDisabled.settings.webSearchEnabled !== false || chatToggleDisabled.settings.provider !== "custom" || chatToggleDisabled.settings.model !== "mock-model" || !chatToggleDisabled.settings.apiKeyConfigured || !chatToggleDisabled.settings.searchApiKeyConfigured || chatToggleDisabled.settings.systemPrompt !== chineseDefaultPrompt) throw new Error(`对话联网开关的部分设置更新覆盖了模型、Prompt 或密钥：${JSON.stringify(chatToggleDisabled.settings)}`);
+  const chatToggleEnabled = await request("/settings", { method: "PUT", body: JSON.stringify({ webSearchEnabled: true, language: "zh-CN" }) }, token);
+  if (chatToggleEnabled.settings.webSearchEnabled !== true) throw new Error("对话联网开关没有写入正式用户设置");
   const connectionTest = await request("/settings/test", { method: "POST", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchBudgetMode: "free", pythonEnabled: false }) }, token);
   if (!connectionTest.message.includes("988/1000") || searchRequests !== 0) throw new Error("额度查询不应消耗搜索请求");
   const modelList = await request("/settings/models", { method: "POST", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", systemPrompt: chineseDefaultPrompt, webSearchEnabled: false, searchBudgetMode: "free", pythonEnabled: false, language: "en" }) }, token);
@@ -265,11 +297,14 @@ try {
   if (!/^[a-f0-9]{64}$/.test(importedPdfBody.document.pdfStructure?.fingerprint || "") || originalTextStart < 0) throw new Error("正式 PDF 上传没有持久化指纹和权威页文本");
   const originalPdfTip = await request(`/documents/${importedPdfBody.document.id}/tips`, { method: "POST", body: JSON.stringify({ anchorType: "pdf", selectedText: originalSelectedText, prefixText: pdfPage.text.slice(Math.max(0, originalTextStart - 32), originalTextStart), suffixText: pdfPage.text.slice(originalTextStart + originalSelectedText.length, originalTextStart + originalSelectedText.length + 32), pdfAnchor: { version: 1, pdfFingerprint: importedPdfBody.document.pdfStructure.fingerprint, pageNumber: 1, source: "native", textStart: originalTextStart, textEnd: originalTextStart + originalSelectedText.length, rects: [{ x: 0.1, y: 0.75, width: 0.08, height: 0.03 }], rotation: pdfPage.rotation, confidence: 1 } }) }, token);
   if (originalPdfTip.tip.anchorType !== "pdf" || originalPdfTip.tip.pdfAnchor?.pageNumber !== 1 || originalPdfTip.tip.blockId !== "pdf:page:1") throw new Error("PDF 原版式 Tip 没有通过正式创建接口形成独立锚点类型");
-  const pdfChatEvents = await chat(originalPdfTip.tip.id, "Explain this PDF selection briefly.", token, "en");
+  const pdfChatEvents = await chat(originalPdfTip.tip.id, "LONG_ANSWER_TEST: export the complete first PDF Tip answer.", token, "en");
   const answeredPdfTip = pdfChatEvents.find((event) => event.type === "done")?.tip;
-  const pdfAssistantMessage = answeredPdfTip?.messages?.findLast((message) => message.role === "assistant");
+  const pdfAssistantMessage = answeredPdfTip?.messages?.find((message) => message.role === "assistant");
+  if (!pdfAssistantMessage?.content.includes("LONG_ANSWER_START") || !pdfAssistantMessage.content.includes("LONG_ANSWER_END") || pdfAssistantMessage.content.length <= 500) throw new Error("PDF 根 Tip 没有持久化超过旧导出上限的完整第一条回答");
+  const secondPdfChatEvents = await chat(originalPdfTip.tip.id, "Explain this PDF selection briefly.", token, "en");
+  const secondPdfAssistantMessage = secondPdfChatEvents.find((event) => event.type === "done")?.tip?.messages?.filter((message) => message.role === "assistant").at(-1);
   const pdfChildSelected = pdfAssistantMessage?.content?.slice(0, 4) || "";
-  if (!pdfAssistantMessage || pdfChildSelected.length !== 4) throw new Error("PDF 根 Tip 没有通过正式聊天入口产生可用于子 Tip 的实际回复");
+  if (!secondPdfAssistantMessage || secondPdfAssistantMessage.id === pdfAssistantMessage.id || pdfChildSelected.length !== 4) throw new Error("PDF 根 Tip 没有通过正式聊天入口产生两轮可区分的实际回复");
   const pdfChildTip = await request(`/tips/${originalPdfTip.tip.id}/children`, { method: "POST", body: JSON.stringify({ messageId: pdfAssistantMessage.id, selectedText: pdfChildSelected, startOffset: 0, endOffset: 4, prefixText: "", suffixText: pdfAssistantMessage.content.slice(4, 20) }) }, token);
   if (pdfChildTip.tip.anchorType !== "message" || pdfChildTip.tip.parentTipId !== originalPdfTip.tip.id || pdfChildTip.tip.depth !== 2) throw new Error("PDF 根 Tip 没有进入现有递归聊天树主链");
   const duplicatePdfTip = await fetch(`${base}/documents/${importedPdfBody.document.id}/tips`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ anchorType: "pdf", selectedText: originalSelectedText, prefixText: "", suffixText: "", pdfAnchor: originalPdfTip.tip.pdfAnchor }) });
@@ -277,6 +312,15 @@ try {
   const exportedPdfResponse = await fetch(`${base}/documents/${importedPdfBody.document.id}/export-annotations`, { headers: { Authorization: `Bearer ${token}` } });
   const exportedPdfBytes = Buffer.from(await exportedPdfResponse.arrayBuffer());
   if (!exportedPdfResponse.ok || exportedPdfResponse.headers.get("content-type") !== "application/pdf" || !decodeURIComponent(exportedPdfResponse.headers.get("content-disposition") || "").includes("中文图片资料-AI-Tip-annotations.pdf") || !exportedPdfBytes.includes(Buffer.from(`aitip:${originalPdfTip.tip.id}`))) throw new Error("PDF Tip 没有通过正式导出接口形成可追踪的批注副本");
+  const reopenedExport = await PDFDocument.load(exportedPdfBytes);
+  const exportedTipContents = (reopenedExport.getPages()[0].node.Annots()?.asArray() || []).map((reference) => {
+    const annotation = reopenedExport.context.lookup(reference, PDFDict);
+    const name = annotation.lookup(PDFName.of("NM"));
+    if (!(name instanceof PDFString) || !name.decodeText().startsWith(`aitip:${originalPdfTip.tip.id}:`)) return null;
+    const contents = annotation.lookup(PDFName.of("Contents"));
+    return contents instanceof PDFString || contents instanceof PDFHexString ? contents.decodeText() : null;
+  }).filter((contents) => typeof contents === "string");
+  if (!exportedTipContents.length || exportedTipContents.some((contents) => !contents.includes(pdfAssistantMessage.content) || !contents.includes("LONG_ANSWER_END") || contents.includes(secondPdfAssistantMessage.content))) throw new Error("正式 HTTP 导出的 PDF 批注没有完整使用第一条回答，或被第二轮回答替换");
   if (createHash("sha256").update(exportedPdfBytes).digest("hex") === createHash("sha256").update(pdfBytes).digest("hex")) throw new Error("PDF 批注导出错误地复用了未修改的原文件");
   const crossUserExport = await fetch(`${base}/documents/${importedPdfBody.document.id}/export-annotations`, { headers: { Authorization: `Bearer ${registered.token}` } });
   if (crossUserExport.status !== 404) throw new Error("其他用户能够导出当前用户的 PDF Tip 批注");
@@ -327,6 +371,23 @@ try {
   const block = loaded.document.blocks[0];
   const created = await request(`/documents/${loaded.document.id}/tips`, { method: "POST", body: JSON.stringify({ blockId: block.id, selectedText: block.content.slice(0, 12), startOffset: 0, endOffset: 12, prefixText: "", suffixText: block.content.slice(12, 24) }) }, token);
 
+  await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: false, searchApiKey: "tvly-test", pythonEnabled: true, reliabilityEnabled: true }) }, token);
+  const disabledTavilyBefore = searchRequests;
+  const disabledReferenceBefore = referenceSearchRequests.length;
+  const disabledExternalFetchBefore = configuredExternalFetchRequests;
+  const disabledSearchAssessmentBefore = searchAssessmentRequests;
+  const disabledAnswerToolStart = answerToolNames.length;
+  const disabledPolicyEvents = await chat(created.tip.id, "如何从政策工具组合与执行偏差角度评估双碳目标的地方落实效果？", token);
+  const disabledPolicyAnswer = disabledPolicyEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
+  const disabledSearchTrace = disabledPolicyEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search_assessment");
+  const disabledAnswerTools = answerToolNames.slice(disabledAnswerToolStart).flat();
+  if (searchRequests !== disabledTavilyBefore || referenceSearchRequests.length !== disabledReferenceBefore || configuredExternalFetchRequests !== disabledExternalFetchBefore) throw new Error(`联网总开关关闭后仍产生 Tavily、百科或网页读取：${JSON.stringify({ tavilyDelta: searchRequests - disabledTavilyBefore, referenceDelta: referenceSearchRequests.length - disabledReferenceBefore, fetchDelta: configuredExternalFetchRequests - disabledExternalFetchBefore })}`);
+  if (searchAssessmentRequests !== disabledSearchAssessmentBefore || disabledAnswerTools.includes("web_search")) throw new Error(`联网总开关关闭后仍调用联网判断模型或向回答模型暴露 web_search：${JSON.stringify({ assessmentDelta: searchAssessmentRequests - disabledSearchAssessmentBefore, tools: disabledAnswerTools })}`);
+  if (!disabledPolicyAnswer || disabledPolicyEvents.some((item) => item.type === "skill" && ["web_search", "web_fetch", "manual_lookup", "citation_audit"].includes(item.skill?.name)) || !String(disabledSearchTrace?.skill?.label).includes("联网搜索已关闭")) throw new Error(`联网关闭状态没有形成非联网正式回答链：${JSON.stringify({ answer: disabledPolicyAnswer, trace: disabledSearchTrace?.skill, skills: disabledPolicyEvents.filter((item) => item.type === "skill").map((item) => item.skill?.name) })}`);
+  if (/https?:\/\/|Tavily API|联网审查未通过/.test(disabledPolicyAnswer) || !disabledPolicyAnswer.includes("未联网核验")) throw new Error(`联网关闭回答包含搜索入口、错误审查结论或缺少未核验标识：${disabledPolicyAnswer}`);
+
+  await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchApiKey: "tvly-test", pythonEnabled: true, reliabilityEnabled: true }) }, token);
+
   await chat(created.tip.id, "Please explain the selected text briefly.", token, "en");
   const englishAnswerPrompt = answerSystemPrompts.findLast((prompt) => prompt.startsWith("You are"));
   if (!englishAnswerPrompt || englishAnswerPrompt.includes("你是文档内的局部阅读助手") || /正确性规则/u.test(englishAnswerPrompt)) throw new Error(`英文请求的模型 system message 仍消费中文内置 Prompt：${englishAnswerPrompt}`);
@@ -344,6 +405,15 @@ try {
   const ordinarySearchesBefore = searchRequests;
   const ordinaryEvents = await chat(created.tip.id, "周末怎样泡一杯清淡的茶？", token);
   const ordinarySearchesAfter = searchRequests;
+  const lowSearchesBefore = searchRequests;
+  const lowSearchDecisionEvents = await chat(created.tip.id, "WEB_SEARCH_DECISION_LOW：只改变 AI 联网判断的置信度。", token);
+  const lowSearchesAfter = searchRequests;
+  const failedSearchesBefore = searchRequests;
+  const failedSearchDecisionEvents = await chat(created.tip.id, "WEB_SEARCH_DECISION_FAILURE：验证非法联网判断不会阻断回答。", token);
+  const failedSearchesAfter = searchRequests;
+  const safetyFailureSearchesBefore = searchRequests;
+  const safetyFailureEvents = await chat(created.tip.id, "RCU grace period WEB_SEARCH_DECISION_FAILURE：验证专业安全下限。", token);
+  const safetyFailureSearchesAfter = searchRequests;
   const highRiskEvents = await chat(created.tip.id, "这个药物剂量是否适合我？", token);
   const longAnswerEvents = await chat(created.tip.id, "LONG_ANSWER_TEST：请生成需要自动续写的完整回答。", token);
   await Promise.all([
@@ -376,6 +446,11 @@ try {
   const assessmentFailure = assessmentFailureEvents.find((item) => item.type === "skill" && item.skill?.name === "professional_assessment");
   const assessmentFailureAnswer = assessmentFailureEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
   const ordinaryAssessment = ordinaryEvents.find((item) => item.type === "skill" && item.skill?.name === "professional_assessment");
+  const lowSearchDecision = lowSearchDecisionEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search_assessment");
+  const lowSearchAnswer = lowSearchDecisionEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
+  const failedSearchDecision = failedSearchDecisionEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search_assessment");
+  const failedSearchAnswer = failedSearchDecisionEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
+  const safetyFailureDecision = safetyFailureEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search_assessment");
   const longAnswer = longAnswerEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
   if (!pythonSkill || !String(pythonSkill.skill.detail).includes("0.3")) throw new Error("Python 工具调用链测试失败");
   if (!searchSkill || searchSkill.skill.sources?.length !== 2) throw new Error("联网搜索工具调用链测试失败");
@@ -390,6 +465,9 @@ try {
   if (!policyAssessment || !String(policyAssessment.skill.detail).includes("模型评估") || !String(policyAssessment.skill.detail).includes("政策与公共治理") || policySearchesAfter - policySearchesBefore !== 1 || policyReview?.skill?.status !== "success" || !policyAnswer.includes("[S1]")) throw new Error(`模型识别的政策专业问题没有进入强制联网正式路径：${JSON.stringify({ assessment: policyAssessment?.skill, searches: policySearchesAfter - policySearchesBefore, review: policyReview?.skill, answer: policyAnswer })}`);
   if (!assessmentFailure || assessmentFailure.skill.status !== "warning" || !assessmentFailureAnswer || assessmentFailureAnswer.includes("本次不会继续生成回答") || assessmentFailureEvents.some((item) => item.type === "skill" && item.skill?.name === "web_search")) throw new Error(`模型专业度评估失败后没有以规则结果继续回答：${JSON.stringify({ assessment: assessmentFailure?.skill, answer: assessmentFailureAnswer })}`);
   if (!ordinaryAssessment || !String(ordinaryAssessment.skill.detail).includes("模型评估") || ordinarySearchesAfter !== ordinarySearchesBefore) throw new Error("普通生活问题不应消耗 Tavily 搜索额度");
+  if (lowSearchesAfter - lowSearchesBefore !== 1 || lowSearchDecision?.skill?.status !== "warning" || !String(lowSearchDecision.skill.label).includes("置信度不足") || !lowSearchAnswer) throw new Error(`AI 低置信度判断没有保守搜索并继续回答：${JSON.stringify({ searchDelta: lowSearchesAfter - lowSearchesBefore, decision: lowSearchDecision?.skill, answer: lowSearchAnswer })}`);
+  if (failedSearchesAfter !== failedSearchesBefore || failedSearchDecision?.skill?.status !== "warning" || !String(failedSearchDecision.skill.label).includes("未盲目搜索") || !failedSearchAnswer) throw new Error(`普通问题的 AI 判断完全失败后仍盲目搜索或没有继续回答：${JSON.stringify({ searchDelta: failedSearchesAfter - failedSearchesBefore, decision: failedSearchDecision?.skill, answer: failedSearchAnswer })}`);
+  if (safetyFailureSearchesAfter - safetyFailureSearchesBefore !== 1 || safetyFailureDecision?.skill?.status !== "warning" || !String(safetyFailureDecision?.skill?.label).includes("必须联网")) throw new Error(`专业安全下限被损坏的 AI 联网判断绕过或被错误标成成功：${JSON.stringify({ searchDelta: safetyFailureSearchesAfter - safetyFailureSearchesBefore, decision: safetyFailureDecision?.skill })}`);
   if (!humanReview || humanReview.skill.status !== "warning" || !highRiskAnswer.includes("重要提示") || highRiskAnswer.startsWith("这是医疗健康高风险问题，但")) throw new Error("高风险证据不足没有保留回答并附加人工复核提示");
   if (!longAnswer.includes("LONG_ANSWER_START") || !longAnswer.includes("LONG_ANSWER_END") || longAnswer.indexOf("LONG_ANSWER_END") <= longAnswer.indexOf("LONG_ANSWER_START") || (longAnswer.match(/LONG_ANSWER_START/g) || []).length !== 1 || (longAnswer.match(/LONG_ANSWER_END/g) || []).length !== 1) throw new Error(`finish_reason=length 没有形成无重复的完整续写：${JSON.stringify({ length: longAnswer.length, start: longAnswer.slice(0, 40), end: longAnswer.slice(-40) })}`);
   if (!finalTip?.messages?.some((item) => item.skills?.some((skill) => skill.name === "web_search"))) throw new Error("技能记录未持久化");
@@ -408,14 +486,16 @@ try {
   const allFailEvents = await chat(created.tip.id, "请联网搜索 REFERENCE_ALL_FAIL", token);
   const allFailAnswer = allFailEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
   const allFailTrace = allFailEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search");
-  if (!allFailAnswer || allFailAnswer.includes("[S1]") || allFailTrace?.skill?.status !== "warning" || !allFailAnswer.includes("没有取得可用联网证据") || !allFailAnswer.includes("Tavily API")) throw new Error(`备用站点全部失败后聊天没有形成有效降级输出：${JSON.stringify({ trace: allFailTrace?.skill, answer: allFailAnswer })}`);
+  const allFailRecovery = allFailEvents.find((item) => item.type === "skill" && item.skill?.name === "search_failure_recovery");
+  const allFailLookup = allFailEvents.find((item) => item.type === "skill" && item.skill?.name === "manual_lookup");
+  if (!allFailAnswer || allFailAnswer.includes("[S1]") || allFailTrace?.skill?.status !== "warning" || allFailTrace?.skill?.sources?.length || allFailRecovery?.skill?.status !== "warning" || allFailLookup?.skill?.sources?.length !== 5 || !allFailAnswer.includes("没有取得可用联网证据") || !allFailAnswer.includes("Tavily API") || !allFailAnswer.includes("自注意力机制允许") || /(?:拒绝回答|无法回答|不会回答|不提供回答)/.test(allFailAnswer) || !allFailAnswer.includes("https://zh.wikipedia.org/w/index.php?search=REFERENCE_ALL_FAIL") || !allFailAnswer.includes("https://en.wikipedia.org/w/index.php?search=REFERENCE_ALL_FAIL")) throw new Error(`备用站点全部失败后没有基于文档回答并提供中英文百科检索入口：${JSON.stringify({ trace: allFailTrace?.skill, recovery: allFailRecovery?.skill, lookup: allFailLookup?.skill, answer: allFailAnswer })}`);
 
   await request("/settings", { method: "PUT", body: JSON.stringify({ provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "mock-model", apiKey: "test-key", systemPrompt: chineseDefaultPrompt, webSearchEnabled: true, searchApiKey: "tvly-test", pythonEnabled: true }) }, token);
   const referenceBeforeTavilyFailure = referenceSearchRequests.length;
   const tavilyFailEvents = await chat(created.tip.id, "请联网搜索 TAVILY_FAIL", token);
   const tavilyFailAnswer = tavilyFailEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
   const tavilyFailTrace = tavilyFailEvents.find((item) => item.type === "skill" && item.skill?.name === "web_search");
-  if (!tavilyFailAnswer || tavilyFailTrace?.skill?.status !== "warning" || referenceSearchRequests.length !== referenceBeforeTavilyFailure || tavilyFailAnswer.includes("Tavily API Key，以获得")) throw new Error(`Tavily 搜索失败后没有在不伪装备用检索的情况下继续回答：${JSON.stringify({ trace: tavilyFailTrace?.skill, answer: tavilyFailAnswer, referenceDelta: referenceSearchRequests.length - referenceBeforeTavilyFailure })}`);
+  if (!tavilyFailAnswer || tavilyFailTrace?.skill?.status !== "warning" || referenceSearchRequests.length !== referenceBeforeTavilyFailure || tavilyFailAnswer.includes("Tavily API Key，以获得") || !tavilyFailAnswer.includes("自注意力机制允许") || !tavilyFailAnswer.includes("https://zh.wikipedia.org/w/index.php?search=") || !tavilyFailAnswer.includes("https://en.wikipedia.org/w/index.php?search=")) throw new Error(`Tavily 搜索失败后没有在不伪装备用检索的情况下基于文档回答并提供百科入口：${JSON.stringify({ trace: tavilyFailTrace?.skill, answer: tavilyFailAnswer, referenceDelta: referenceSearchRequests.length - referenceBeforeTavilyFailure })}`);
 
   const nestedSourceTip = (await request(`/documents/${loaded.document.id}`, {}, token)).tips.find((item) => item.id === created.tip.id);
   const nestedSourceMessage = [...nestedSourceTip.messages].reverse().find((item) => item.role === "assistant" && item.content.includes("政策评估"));
@@ -452,20 +532,19 @@ try {
   const freshBlock = freshDocument.document.blocks[0];
   await request(`/documents/${freshDocument.document.id}`, { method: "PATCH", body: JSON.stringify({ blocks: [{ ...freshBlock, content: "并发程序的内存一致性" }] }) }, registered.token);
   const freshTip = await request(`/documents/${freshDocument.document.id}/tips`, { method: "POST", body: JSON.stringify({ blockId: freshBlock.id, selectedText: "并发程序", startOffset: 0, endOffset: 4, prefixText: "", suffixText: "的内存一致性" }) }, registered.token);
-  const blockedProfessionalEvents = await chat(freshTip.tip.id, "请从弱内存模型和线性一致性角度进行专业分析。", registered.token);
-  const blockedProfessionalAnswer = blockedProfessionalEvents.find((item) => item.type === "done")?.tip?.messages?.at(-1)?.content || "";
-  const blockedProfessionalReview = blockedProfessionalEvents.find((item) => item.type === "skill" && item.skill?.name === "professional_review");
-  if (!blockedProfessionalEvents.some((item) => item.type === "skill" && item.skill?.name === "professional_assessment") || blockedProfessionalReview?.skill?.status !== "warning" || !String(blockedProfessionalReview.skill.detail).includes("模型 API 未配置") || !blockedProfessionalAnswer || blockedProfessionalAnswer.includes("回答已阻断")) throw new Error(`专业问题在联网未配置时没有继续给出明确标记的一般性回答，或错误使用了发布者环境 API Key：${JSON.stringify({ events: blockedProfessionalEvents.filter((item) => item.type === "skill"), answer: blockedProfessionalAnswer })}`);
+  const blockedBefore = (await request(`/documents/${freshDocument.document.id}`, {}, registered.token)).tips.find((item) => item.id === freshTip.tip.id).messages.length;
+  const blockedProfessional = await fetch(`${base}/tips/${freshTip.tip.id}/chat`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${registered.token}` }, body: JSON.stringify({ question: "请从弱内存模型和线性一致性角度进行专业分析。" }) });
+  const blockedProfessionalBody = await blockedProfessional.json();
+  const blockedAfter = (await request(`/documents/${freshDocument.document.id}`, {}, registered.token)).tips.find((item) => item.id === freshTip.tip.id).messages.length;
+  if (blockedProfessional.status !== 409 || blockedProfessionalBody.code !== "MODEL_NOT_CONFIGURED" || !String(blockedProfessionalBody.error).includes("下载本地模型") || blockedBefore !== blockedAfter) throw new Error(`未配置模型时聊天没有在写入历史前被阻断，或错误使用了发布者环境 API Key：${JSON.stringify({ status: blockedProfessional.status, body: blockedProfessionalBody, blockedBefore, blockedAfter })}`);
 
-  const feedback = await request("/feedback", { method: "POST", body: JSON.stringify({ category: "feature", message: "希望增加专业问题联网审查的状态说明。" }) }, token);
-  if (!feedback.ok || feedbackPayloads.length !== 1 || JSON.stringify(feedbackPayloads[0]).includes("@qq.com") || "recipient" in feedbackPayloads[0] || "to" in feedbackPayloads[0]) throw new Error("建议中继或隐藏收件人测试失败");
-  const repeatedFeedback = await fetch(`${base}/feedback`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ category: "feature", message: "这是第二条过于频繁提交的有效建议。" }) });
-  if (repeatedFeedback.status !== 429) throw new Error("建议接口没有限制提交频率");
-  process.env.AI_TIP_FEEDBACK_RELAY_URL = "";
-  const unconfiguredFeedback = await fetch(`${base}/feedback`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${registered.token}` }, body: JSON.stringify({ category: "other", message: "中继未配置时，这段建议必须明确返回失败。" }) });
-  if (unconfiguredFeedback.status !== 503) throw new Error("建议中继未配置时没有明确失败");
-  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, policyProfessionalReview: true, professionalReview: true, fallbackReferenceSearch: true, fallbackSiteSkip: true, fallbackAllFailedAnswered: true, tavilyFailedAnswered: true, unsupportedAnswerPreserved: true, assessmentFailureAnswered: true, outputLengthContinued: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, filenameMigration: true, pdfImport: true, pdfOriginalTip: true, pdfRecursiveTip: true, pdfOrphanChatBlocked: true, pdfAnnotationExport: true, pdfBytePreservation: true, uploadOver10Mb: true, uploadTempCleanup: true, englishPromptCausal: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, feedbackRelay: true, citationAudit: true, humanReview: true, persisted: true }));
+  const removedFeedback = await fetch(`${base}/feedback`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ category: "feature", message: "该旧入口不应继续存在" }) });
+  const removedFeedbackWithoutAuth = await fetch(`${base}/feedback`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category: "feature", message: "该旧入口不应继续存在" }) });
+  if (removedFeedback.status !== 404 || removedFeedbackWithoutAuth.status !== 404) throw new Error(`建议功能移除后旧 HTTP 路由仍可调用：${JSON.stringify({ authenticated: removedFeedback.status, anonymous: removedFeedbackWithoutAuth.status })}`);
+  if (configuredExternalFetchRequests < 1) throw new Error("正式联网路径没有消费可注入的桌面系统网络 fetch");
+  console.log(JSON.stringify({ python: pythonSkill.skill.detail, searchSources: searchSkill.skill.sources.length, modelAssessmentRequests, searchAssessmentRequests, aiSearchLowConfidenceFallback: true, aiSearchInvalidOutputNoBlindSearch: true, aiSearchSafetyFailureStillSearches: true, webSearchDisabledNoNetwork: true, webSearchToolHiddenWhenDisabled: true, feedbackRemoved: true, configuredExternalFetchRequests, policyProfessionalReview: true, professionalReview: true, noModelChatBlockedBeforeMutation: true, fallbackReferenceSearch: true, fallbackSiteSkip: true, fallbackAllFailedAnswered: true, tavilyFailedAnswered: true, unsupportedAnswerPreserved: true, assessmentFailureAnswered: true, outputLengthContinued: true, nestedTips: true, recursiveLineage: true, legacyMigration: true, filenameMigration: true, pdfImport: true, pdfOriginalTip: true, pdfRecursiveTip: true, pdfOrphanChatBlocked: true, pdfAnnotationExport: true, pdfExportedFirstAnswerComplete: true, pdfBytePreservation: true, uploadOver10Mb: true, uploadTempCleanup: true, englishPromptCausal: true, orphanChatBlocked: true, depthOverflowBlocked: true, cascadeDelete: true, citationAudit: true, humanReview: true, persisted: true }));
 } finally {
+  configureExternalNetworkFetch(null);
   await new Promise((resolve) => appServer.close(resolve));
   await new Promise((resolve) => mock.close(resolve));
   await rm(tempData, { recursive: true, force: true });

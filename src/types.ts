@@ -96,6 +96,8 @@ export interface DocumentItem {
   updatedAt: string;
   lastOpenedAt: string;
   tipCount: number;
+  cloudSyncedAt?: string;
+  cloudState?: "local" | "modified" | "synced";
   pdfStructure?: {
     version: number;
     status: "complete" | "visual-only" | "failed";
@@ -105,6 +107,14 @@ export interface DocumentItem {
     fingerprint: string;
     pages: PdfPageSource[];
   };
+}
+
+export interface CloudUsage {
+  usedBytes: number;
+  limitBytes: number;
+  storageBytes: number;
+  databaseBytes: number;
+  objectCount: number;
 }
 
 export interface TipMessage {
@@ -118,7 +128,7 @@ export interface TipMessage {
 }
 
 export interface SkillTrace {
-  name: "professional_assessment" | "professional_review" | "authority_check" | "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review" | "output_continuation";
+  name: "professional_assessment" | "web_search_assessment" | "professional_review" | "authority_check" | "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review" | "output_continuation" | "manual_lookup" | "search_failure_recovery";
   label: string;
   detail: string;
   sources?: Array<{ title: string; url: string }>;
@@ -151,7 +161,7 @@ export interface TipThread {
   updatedAt: string;
 }
 
-export type ApiProvider = "openai" | "deepseek" | "siliconflow" | "moonshot" | "zhipu" | "gemini" | "ollama" | "custom";
+export type ApiProvider = "openai" | "deepseek" | "siliconflow" | "moonshot" | "zhipu" | "gemini" | "local" | "ollama" | "custom";
 
 export interface AiSettings {
   provider: ApiProvider;
@@ -183,10 +193,24 @@ export interface AiSettingsInput {
   reliabilityEnabled: boolean;
 }
 
+export type AiRuntimeStatusReason = "ready" | "no-api-key" | "local-runtime-unavailable" | "ollama-unreachable" | "model-not-installed" | "invalid-local-endpoint";
+
+export interface AiRuntimeStatus {
+  configured: boolean;
+  provider: ApiProvider;
+  model: string;
+  reason: AiRuntimeStatusReason;
+  local: boolean;
+  ollamaReachable?: boolean;
+  installed?: boolean;
+  detail?: string;
+}
+
 export interface User {
   id: string;
   name: string;
   email: string;
+  authMode?: "local" | "supabase";
 }
 
 export interface SelectionInfo {

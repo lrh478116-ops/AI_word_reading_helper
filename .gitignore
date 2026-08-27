@@ -9,6 +9,8 @@ data/
 .DS_Store
 
 release.zip
+.release-archive/
+.tmp-llama-runtime/
 
 # Dependencies
 node_modules/

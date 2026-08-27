@@ -1,19 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveRestore, ArrowLeft, BookOpen, Brain, Calculator, Check, CheckCircle2, ChevronDown, ChevronLeft,
-  CircleHelp, Clock3, Cloud, CloudOff, Copy, FileCode2, FileText, Folder, Heart, Highlighter,
-  GitBranch, Globe2, Languages, Library, LoaderCircle, LogOut, Menu, MessageCircleMore, PanelLeftClose,
+  CircleHelp, Clock3, Cloud, CloudOff, Copy, Cpu, Download, FileCode2, FileText, Folder, HardDrive, Heart, Highlighter,
+  GitBranch, Globe2, Languages, Library, LoaderCircle, LogOut, Mail, Menu, MessageCircleMore, PanelLeftClose,
   PanelRightClose, Plus, RefreshCw, Search, Send, Settings, ShieldCheck, Sparkles, Square, Star, Trash2,
   Upload, WandSparkles, X, Zap
 } from "lucide-react";
-import { api, session } from "./api";
+import { ApiError, api, session } from "./api";
 import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type Language } from "./i18n";
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
 import { TipMarkerButton } from "./TipMarkerButton";
 import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
-import type { AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, DocumentBlock, DocumentItem, PdfSelectionInfo, PdfTableData, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
-import { buildTipForest, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
+import type { AiRuntimeStatus, AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, CloudUsage, DocumentBlock, DocumentItem, PdfSelectionInfo, PdfTableData, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
+import type { LocalModelCatalogItem, OllamaRuntimeInfo } from "./local-models";
+import { buildTipForest, httpLinkRanges, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
 
 type Screen = { type: "library"; tab: "all" | "favorites" | "trash" } | { type: "editor"; id: string };
 type SaveState = "saved" | "saving" | "error" | "offline";
@@ -21,6 +22,7 @@ type Translate = (key: string, variables?: Record<string, string | number>) => s
 type ImportPhase = "idle" | "dragging" | "saving" | "uploading";
 
 const DOCUMENT_ACCEPT = ".txt,.md,.markdown,.docx,.pdf";
+const CONTACT_EMAIL = "2280810215@qq.com";
 const SUPPORTED_DOCUMENT_EXTENSIONS = new Set(DOCUMENT_ACCEPT.split(","));
 
 function documentExtension(file: Pick<File, "name">) {
@@ -53,33 +55,90 @@ function iconForSource(source: DocumentItem["sourceType"]) {
   return <FileText size={21} />;
 }
 
+type AuthMode = "login" | "register" | "verify-registration" | "recover" | "reset";
+
 function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
   const { t } = useI18n();
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<AuthMode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [accountExists, setAccountExists] = useState(false);
+  const [rememberLogin, setRememberLogin] = useState(false);
+  const [credentialStorageAvailable, setCredentialStorageAvailable] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    void window.aiTipDesktop?.loadRememberedLogin().then((result) => {
+      if (!active) return;
+      setCredentialStorageAvailable(result.available);
+      if (result.credentials) {
+        setEmail(result.credentials.email);
+        setPassword(result.credentials.password);
+        setRememberLogin(true);
+      }
+    }).catch(() => { if (active) setCredentialStorageAvailable(false); });
+    return () => { active = false; };
+  }, []);
+
+  const changeMode = (next: AuthMode) => {
+    setMode(next); setError(""); setNotice(""); setCode(""); setAccountExists(false);
+  };
+
+  const finishAuth = async (result: Awaited<ReturnType<typeof api.login>>, persistLogin = false) => {
+    if (!result.token || !result.user) throw new Error(t("auth.missingSession"));
+    if (persistLogin && window.aiTipDesktop) {
+      try {
+        if (rememberLogin) await window.aiTipDesktop.saveRememberedLogin(email, password);
+        else await window.aiTipDesktop.clearRememberedLogin();
+      } catch (error) { console.warn("Could not update remembered login:", error instanceof Error ? error.message : String(error)); }
+    }
+    session.set(result.token, result.refreshToken);
+    onAuth(result.user);
+  };
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setNotice(""); setAccountExists(false);
     try {
-      const result = mode === "login" ? await api.login(email, password) : await api.register(name, email, password);
-      session.set(result.token); onAuth(result.user);
-    } catch (err) { setError(err instanceof Error ? err.message : t("auth.loginFailed")); }
-    finally { setLoading(false); }
+      if (mode === "register") {
+        const result = await api.register(name, email, password);
+        if (result.confirmationRequired || result.verificationRequired) {
+          setMode("verify-registration"); setNotice(t("auth.confirmEmail")); return;
+        }
+        await finishAuth(result); return;
+      }
+      if (mode === "verify-registration") { await finishAuth(await api.verifyRegistration(email, code)); return; }
+      if (mode === "recover") {
+        await api.requestPasswordRecovery(email);
+        setMode("reset"); setNotice(t("auth.recoverySent")); return;
+      }
+      if (mode === "reset") { await finishAuth(await api.resetPassword(email, code, password)); return; }
+      await finishAuth(await api.login(email, password), true);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "ACCOUNT_EXISTS") {
+        setAccountExists(true); setError(t("auth.accountExists"));
+      } else setError(err instanceof Error ? err.message : t("auth.loginFailed"));
+    } finally { setLoading(false); }
   };
 
   const demo = async () => {
-    setLoading(true); setError("");
-    try {
-      const result = await api.login("demo@aitip.local", "demo1234");
-      session.set(result.token); onAuth(result.user);
-    } catch (err) { setError(err instanceof Error ? err.message : t("auth.localFailed")); }
+    setLoading(true); setError(""); setNotice("");
+    try { await finishAuth(await api.login("demo@aitip.local", "demo1234")); }
+    catch (err) { setError(err instanceof Error ? err.message : t("auth.localFailed")); }
     finally { setLoading(false); }
   };
+
+  const title = mode === "login" ? t("auth.loginTitle") : mode === "register" ? t("auth.registerTitle") : mode === "verify-registration" ? t("auth.verifyTitle") : mode === "recover" ? t("auth.recoverTitle") : t("auth.resetTitle");
+  const hint = mode === "login" ? t("auth.loginHint") : mode === "register" ? t("auth.registerHint") : mode === "verify-registration" ? t("auth.verifyHint") : mode === "recover" ? t("auth.recoverHint") : t("auth.resetHint");
+  const action = mode === "login" ? t("auth.login") : mode === "register" ? t("auth.create") : mode === "verify-registration" ? t("auth.verify") : mode === "recover" ? t("auth.sendCode") : t("auth.reset");
+  const showPassword = mode === "login" || mode === "register" || mode === "reset";
+  const showCode = mode === "verify-registration" || mode === "reset";
+  const primaryModes = mode === "login" || mode === "register";
 
   return (
     <main className="auth-shell">
@@ -89,40 +148,272 @@ function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
           <div className="eyebrow"><span /> {t("auth.eyebrow")}</div>
           <h1>{t("auth.hero1")}<br />{t("auth.hero2")}</h1>
           <p>{t("auth.description")}</p>
-          <div className="feature-preview">
-            <div className="preview-page">
-              <div className="preview-lines"><i /><i /><i /><i /></div>
-              <div className="preview-select">{t("auth.previewSelection")}</div>
-              <div className="preview-tip"><Sparkles size={14} /> {t("auth.previewQuestion")}</div>
-            </div>
-          </div>
+          <div className="feature-preview"><div className="preview-page"><div className="preview-lines"><i /><i /><i /><i /></div><div className="preview-select">{t("auth.previewSelection")}</div><div className="preview-tip"><Sparkles size={14} /> {t("auth.previewQuestion")}</div></div></div>
         </div>
         <p className="auth-foot">{t("auth.footer")}</p>
       </section>
       <section className="auth-panel">
-        <form className="auth-card" onSubmit={submit}>
+        <form className="auth-card" data-auth-mode={mode} onSubmit={submit}>
           <div className="mobile-brand brand"><span className="brand-mark"><Sparkles size={18} /></span>AI Tip</div>
-          <div>
-            <p className="overline">{mode === "login" ? t("auth.welcome") : t("auth.start")}</p>
-            <h2>{mode === "login" ? t("auth.loginTitle") : t("auth.registerTitle")}</h2>
-            <p className="muted">{mode === "login" ? t("auth.loginHint") : t("auth.registerHint")}</p>
-          </div>
+          <div><p className="overline">{mode === "login" ? t("auth.welcome") : t("auth.start")}</p><h2>{title}</h2><p className="muted">{hint}</p></div>
           <LanguageSelect className="auth-language" />
-          {mode === "register" && <label>{t("auth.name")}<input autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("auth.namePlaceholder")} /></label>}
-          <label>{t("auth.email")}<input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" /></label>
-          <label>{t("auth.password")}<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t("auth.passwordPlaceholder")} /></label>
+          {mode === "register" && <label>{t("auth.name")}<input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder={t("auth.namePlaceholder")} required /></label>}
+          <label>{t("auth.email")}<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required readOnly={mode === "verify-registration" || mode === "reset"} /></label>
+          {showCode && <label>{t("auth.code")}<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder={t("auth.codePlaceholder")} required /></label>}
+          {showPassword && <label>{mode === "reset" ? t("auth.newPassword") : t("auth.password")}<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t("auth.passwordPlaceholder")} required minLength={6} /></label>}
+          {mode === "login" && <div className="auth-remember-row"><label><input type="checkbox" data-remember-login checked={rememberLogin} disabled={!credentialStorageAvailable} onChange={(event) => setRememberLogin(event.target.checked)} /><span>{t("auth.rememberLogin")}</span></label>{rememberLogin && <button type="button" onClick={() => { setRememberLogin(false); void window.aiTipDesktop?.clearRememberedLogin(); }}>{t("auth.clearRemembered")}</button>}</div>}
+          {mode === "login" && !credentialStorageAvailable && <p className="auth-security-note">{t("auth.secureStorageUnavailable")}</p>}
+          {(mode === "login" || (mode === "register" && accountExists)) && <button type="button" className="auth-inline-action" onClick={() => changeMode("recover")}>{t("auth.forgot")}</button>}
+          {notice && <div className="form-success"><CheckCircle2 size={16} />{notice}</div>}
           {error && <div className="form-error"><CircleHelp size={16} />{error}</div>}
-          <button className="primary auth-submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : null}{mode === "login" ? t("auth.login") : t("auth.create")}</button>
-          <div className="divider"><span>{t("auth.or")}</span></div>
-          <button type="button" className="secondary demo-button" onClick={demo} disabled={loading}><Zap size={17} />{t("auth.localUse")}</button>
-          <p className="auth-switch">{mode === "login" ? t("auth.noAccount") : t("auth.hasAccount")}<button type="button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}>{mode === "login" ? t("auth.freeRegister") : t("auth.backLogin")}</button></p>
+          <button className="primary auth-submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : null}{action}</button>
+          {primaryModes ? <><div className="divider"><span>{t("auth.or")}</span></div><button type="button" className="secondary demo-button" onClick={demo} disabled={loading}><Zap size={17} />{t("auth.localUse")}</button><p className="auth-switch">{mode === "login" ? t("auth.noAccount") : t("auth.hasAccount")}<button type="button" onClick={() => changeMode(mode === "login" ? "register" : "login")}>{mode === "login" ? t("auth.freeRegister") : t("auth.backLogin")}</button></p></> : <p className="auth-switch"><button type="button" onClick={() => changeMode("login")}>{t("auth.back")}</button></p>}
         </form>
       </section>
     </main>
   );
 }
 
-function SettingsModal({ onClose }: { onClose: () => void }) {
+function formatModelBytes(bytes: number, language: Language) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes === 0) return "0 MB";
+  if (bytes < 1_000_000_000) return `${Math.round(bytes / 1_000_000)} MB`;
+  return `${(bytes / 1_000_000_000).toLocaleString(language, { maximumFractionDigits: 2 })} GB`;
+}
+
+function formatDownloadEta(seconds: number, language: Language) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  if (seconds < 60) return language === "en" ? `${Math.ceil(seconds)} sec` : `${Math.ceil(seconds)} 秒`;
+  const minutes = Math.ceil(seconds / 60);
+  return language === "en" ? `${minutes} min` : `${minutes} 分钟`;
+}
+
+function LocalModelsScreen({ onBack, onConnected }: { onBack: () => void; onConnected: () => void }) {
+  const { language, t } = useI18n();
+  const [models, setModels] = useState<LocalModelCatalogItem[]>([]);
+  const [runtime, setRuntime] = useState<OllamaRuntimeInfo | null>(null);
+  const [verifiedAt, setVerifiedAt] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState<{ model: LocalModelCatalogItem; source: LocalModelCatalogItem["sources"][number]; directory: string; selectionToken: string; freeBytes: number } | null>(null);
+  const [ollamaSetup, setOllamaSetup] = useState<{ model: LocalModelCatalogItem; source: LocalModelCatalogItem["sources"][number]; installed: boolean; supported: boolean; mas: boolean; executable: string; installer: { version: string; assetName: string; size: number; sha256: string; startUrl: string } | null; destination: string; selectionToken: string; requestId: string; completed: number; total: number; status: string; speedBps: number; downloading: boolean; message: string } | null>(null);
+  const [download, setDownload] = useState<{ modelId: string; sourceId: string; completed: number; total: number; status: string; speedBps: number; startedAt: number; networkStack: string; initialHost: string; finalHost: string; proxyDescription: string } | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const metrics = useRef({ at: 0, bytes: 0, speed: 0 });
+  const installerMetrics = useRef({ at: 0, bytes: 0, speed: 0 });
+
+  const importGguf = async () => {
+    if (!window.aiTipDesktop) { setError(t("localModels.desktopOnly")); return; }
+    setError("");
+    try {
+      const modelId = "aitip:imported-gguf";
+      const selected = await window.aiTipDesktop.chooseLocalModelFile(modelId);
+      if (selected.canceled) return;
+      const connected = await api.connectLocalModel(modelId);
+      setRuntime(connected.runtime);
+      onConnected();
+      window.alert(t("localModels.importConnected"));
+    } catch (error) { setError(error instanceof Error ? error.message : t("localModels.importFailed")); }
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const result = await api.localModels();
+      setModels(result.models); setRuntime(result.runtime); setVerifiedAt(result.verifiedAt);
+    } catch (error) { setError(error instanceof Error ? error.message : t("localModels.loadFailed")); }
+    finally { setLoading(false); }
+  }, [t]);
+  useEffect(() => {
+    void load();
+    const unsubscribe = window.aiTipDesktop?.onOllamaInstallerProgress((event) => setOllamaSetup((current) => {
+      if (!current || current.requestId !== event.requestId) return current;
+      const at = Date.now();
+      const elapsed = (at - installerMetrics.current.at) / 1000;
+      let speedBps = current.speedBps;
+      if (elapsed >= 0.35 && event.completed > installerMetrics.current.bytes) {
+        const instant = (event.completed - installerMetrics.current.bytes) / elapsed;
+        speedBps = installerMetrics.current.speed ? installerMetrics.current.speed * 0.65 + instant * 0.35 : instant;
+        installerMetrics.current = { at, bytes: event.completed, speed: speedBps };
+      }
+      return { ...current, completed: event.completed, total: event.total || current.total, status: event.status, speedBps };
+    }));
+    return () => { controller.current?.abort(); unsubscribe?.(); };
+  }, [load]);
+
+  const openDownload = async (model: LocalModelCatalogItem, source: LocalModelCatalogItem["sources"][number]) => {
+    if (download) return;
+    setError("");
+    if (source.id === "ollama") {
+      if (!window.aiTipDesktop) { setError(t("localModels.desktopOnly")); return; }
+      try {
+        const status = await window.aiTipDesktop.getOllamaStatus();
+        if (!status.installed) {
+          setOllamaSetup({ model, source, ...status, destination: "", selectionToken: "", requestId: "", completed: 0, total: status.installer?.size || 0, status: t("localModels.waiting"), speedBps: 0, downloading: false, message: "" });
+          return;
+        }
+      } catch (error) { setError(error instanceof Error ? error.message : t("localModels.ollamaCheckFailed")); return; }
+    }
+    setPending({ model, source, directory: source.id === "ollama" ? "" : runtime?.storagePath || "", selectionToken: "", freeBytes: 0 });
+  };
+
+  const chooseOllamaInstallerDestination = async () => {
+    if (!ollamaSetup || !window.aiTipDesktop) return;
+    try {
+      const result = await window.aiTipDesktop.chooseOllamaInstallerDestination();
+      if (!result.canceled && result.path && result.selectionToken) setOllamaSetup((current) => current ? { ...current, destination: result.path!, selectionToken: result.selectionToken!, message: "" } : current);
+    } catch (error) { setOllamaSetup((current) => current ? { ...current, message: error instanceof Error ? error.message : t("localModels.directoryFailed") } : current); }
+  };
+
+  const startOllamaInstaller = async () => {
+    if (!ollamaSetup || !window.aiTipDesktop || !ollamaSetup.selectionToken || ollamaSetup.downloading) return;
+    const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    installerMetrics.current = { at: Date.now(), bytes: 0, speed: 0 };
+    setOllamaSetup((current) => current ? { ...current, requestId, downloading: true, completed: 0, speedBps: 0, status: t("localModels.preparing"), message: "" } : current);
+    try {
+      const result = await window.aiTipDesktop.downloadOllamaInstaller(requestId, ollamaSetup.selectionToken);
+      setOllamaSetup((current) => current ? { ...current, downloading: false, completed: result.size, total: result.size, status: t("localModels.ollamaInstallerVerified"), selectionToken: "", message: result.opened ? t("localModels.ollamaInstallerOpened") : t("localModels.ollamaInstallerSaved", { path: result.finalPath }) } : current);
+    } catch (error) {
+      setOllamaSetup((current) => current ? { ...current, downloading: false, selectionToken: "", message: error instanceof Error ? error.message : t("localModels.downloadFailed") } : current);
+    }
+  };
+
+  const recheckOllama = async () => {
+    if (!ollamaSetup || !window.aiTipDesktop) return;
+    try {
+      const status = await window.aiTipDesktop.getOllamaStatus();
+      if (status.installed) {
+        const { model, source } = ollamaSetup;
+        setOllamaSetup(null);
+        setPending({ model, source, directory: "", selectionToken: "", freeBytes: 0 });
+      } else setOllamaSetup((current) => current ? { ...current, ...status, message: t("localModels.ollamaStillMissing") } : current);
+    } catch (error) { setOllamaSetup((current) => current ? { ...current, message: error instanceof Error ? error.message : t("localModels.ollamaCheckFailed") } : current); }
+  };
+
+  const chooseDirectory = async () => {
+    if (!pending) return;
+    if (!window.aiTipDesktop) { setError(t("localModels.desktopOnly")); return; }
+    try {
+      const result = await window.aiTipDesktop.chooseModelDirectory(pending.directory, pending.source.id === "ollama" ? "ollama" : "llama.cpp");
+      if (!result.canceled && result.path && result.selectionToken) setPending((current) => current ? { ...current, directory: result.path!, selectionToken: result.selectionToken!, freeBytes: 0 } : current);
+    } catch (error) { setError(error instanceof Error ? error.message : t("localModels.directoryFailed")); }
+  };
+
+  const startDownload = async () => {
+    if (!pending || download) return;
+    const { model, source } = pending;
+    let destinationPath = pending.directory;
+    if (!destinationPath) { setError(t("localModels.chooseFirst")); return; }
+    setError("");
+    if (pending.selectionToken) {
+      if (!window.aiTipDesktop) { setError(t("localModels.desktopOnly")); return; }
+      try {
+        const prepared = await window.aiTipDesktop.prepareModelDirectory(pending.selectionToken);
+        destinationPath = prepared.directory;
+        if (prepared.freeBytes > 0 && prepared.freeBytes < model.approxBytes * 1.1) {
+          setPending((current) => current ? { ...current, directory: prepared.directory, selectionToken: "", freeBytes: prepared.freeBytes } : current);
+          setError(t("localModels.insufficientSpace", { free: formatModelBytes(prepared.freeBytes, language), needed: formatModelBytes(Math.ceil(model.approxBytes * 1.1), language) }));
+          return;
+        }
+        const refreshed = await api.localModels();
+        setRuntime(refreshed.runtime);
+        setPending((current) => current ? { ...current, directory: prepared.directory, selectionToken: "", freeBytes: prepared.freeBytes } : current);
+      } catch (error) { setPending((current) => current ? { ...current, selectionToken: "" } : current); setError(error instanceof Error ? error.message : t("localModels.runtimePrepareFailed")); return; }
+    }
+    const ctrl = new AbortController(); controller.current = ctrl;
+    const startedAt = Date.now();
+    metrics.current = { at: startedAt, bytes: 0, speed: 0 };
+    setDownload({ modelId: model.id, sourceId: source.id, completed: 0, total: model.approxBytes, status: t("localModels.preparing"), speedBps: 0, startedAt, networkStack: "", initialHost: "", finalHost: "", proxyDescription: "" });
+    try {
+      const result = await api.downloadLocalModel(model.id, source.id, destinationPath, ctrl.signal, (event) => {
+        if (event.type === "progress" || event.type === "start") setDownload((current) => {
+          if (!current) return current;
+          const nowAt = Date.now();
+          const completed = Math.max(current.completed, event.completed || 0);
+          const elapsed = (nowAt - metrics.current.at) / 1000;
+          if (elapsed >= 0.35 && completed > metrics.current.bytes) {
+            const instant = (completed - metrics.current.bytes) / elapsed;
+            metrics.current.speed = metrics.current.speed ? metrics.current.speed * 0.65 + instant * 0.35 : instant;
+            metrics.current.at = nowAt; metrics.current.bytes = completed;
+          }
+          return { ...current, completed, total: event.total || current.total, status: event.status || current.status, speedBps: metrics.current.speed, networkStack: event.networkStack || current.networkStack, initialHost: event.initialHost || current.initialHost, finalHost: event.finalHost || current.finalHost, proxyDescription: event.proxyDescription || current.proxyDescription };
+        });
+      });
+      setRuntime(result.runtime);
+      setDownload(null);
+      setPending(null);
+      onConnected();
+      window.alert(t("localModels.connected", { model: model.name }));
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") setError(error instanceof Error ? error.message : t("localModels.downloadFailed"));
+      setDownload(null);
+    } finally { controller.current = null; }
+  };
+
+  const tierLabel = (tier: LocalModelCatalogItem["tier"]) => t(`localModels.tier.${tier}`);
+  const ramGb = runtime ? runtime.totalRamBytes / 1024 ** 3 : 0;
+  const percent = download?.total ? Math.min(100, Math.round(download.completed / download.total * 100)) : 0;
+  const remainingSeconds = download?.speedBps && download.total > download.completed ? (download.total - download.completed) / download.speedBps : 0;
+  return <main className="local-models-screen" data-local-models-screen>
+    <header className="local-models-header">
+      <div><button className="secondary compact" onClick={onBack}><ArrowLeft size={15} />{t("common.back")}</button><span className="settings-kicker"><Cpu size={13} />{t("localModels.kicker")}</span><h1>{t("localModels.title")}</h1><p>{t("localModels.subtitle")}</p></div>
+      <div className="local-model-header-actions"><button className="secondary" onClick={() => void importGguf()}><Upload size={15} />{t("localModels.importGguf")}</button><LanguageSelect /></div>
+    </header>
+    <section className={`local-runtime-card ${runtime?.reachable ? "ready" : "missing"}`}>
+      <div className="local-runtime-icon"><HardDrive size={22} /></div>
+      <div><strong>{runtime?.reachable ? t("localModels.runtimeReady") : t("localModels.runtimeBundled")}</strong><p>{runtime?.reachable ? t("localModels.runtimeReadyHint", { version: runtime.version || t("localModels.unknownVersion") }) : t("localModels.runtimeBundledHint")}</p><small>{t("localModels.storage")}: {runtime?.storagePath || "—"} · {runtime?.storagePathSource === "user-selected" ? t("localModels.storageSelected") : t("localModels.storageDefault")}</small></div>
+      <div className="local-hardware"><span>{t("localModels.systemRam")}</span><strong>{ramGb ? `${ramGb.toFixed(0)} GB` : "—"}</strong><button className="icon-button" onClick={() => void load()} title={t("common.retry")}><RefreshCw size={16} /></button></div>
+    </section>
+    <div className="local-model-notes"><ShieldCheck size={16} /><p>{t("localModels.runtimeNote")}<br />{t("localModels.mirrorNote")}</p></div>
+    {error && !pending && <div className="local-model-error"><CircleHelp size={16} /><span>{error}</span><button onClick={() => setError("")}><X size={14} /></button></div>}
+    {loading ? <div className="settings-loading"><LoaderCircle className="spin" size={20} />{t("localModels.loading")}</div> : <section className="local-model-table-wrap">
+      <div className="local-model-table-meta"><span>{t("localModels.catalog", { count: models.length })}</span><small>{t("localModels.verified", { date: verifiedAt })}</small></div>
+      <div className="local-model-table" role="table">
+        <div className="local-model-row local-model-head" role="row"><span>{t("localModels.tier")}</span><span>{t("localModels.model")}</span><span>{t("localModels.size")}</span><span>{t("localModels.ram")}</span><span>{t("localModels.gpu")}</span><span>{t("localModels.features")}</span><span>{t("localModels.sources")}</span></div>
+        {models.map((model) => {
+          const installed = runtime?.installedModels.includes(`aitip:${model.id}`);
+          return <div className={`local-model-row ${model.recommended ? "recommended" : ""}`} role="row" key={model.id} data-local-model-id={model.id}>
+            <span><i className={`tier-badge ${model.tier}`}>{tierLabel(model.tier)}</i>{model.recommended && <em>{t("localModels.recommended")}</em>}</span>
+            <span><strong>{model.name}</strong><small>{model.quantization}</small></span>
+            <span>{formatModelBytes(model.approxBytes, language)}</span><span>{model.ram}</span><span>{model.gpu}</span>
+            <span className="local-model-feature">{language === "en" ? model.featuresEn : model.featuresZh}</span>
+            <span className="local-model-sources">{installed ? <b><CheckCircle2 size={13} />{t("localModels.installed")}</b> : model.sources.map((source) => {
+              const active = download?.modelId === model.id && download.sourceId === source.id;
+              const percent = active && download.total ? Math.min(100, Math.round(download.completed / download.total * 100)) : 0;
+              return <button key={source.id} className="secondary compact source-download" data-model-source={source.id} title={source.artifact?.filename || source.modelRef} disabled={Boolean(download)} onClick={() => void openDownload(model, source)}>{active ? <LoaderCircle className="spin" size={13} /> : <Download size={13} />}{active ? `${percent}%` : language === "en" ? source.labelEn : source.labelZh}<code>{source.artifact?.filename || source.modelRef}</code></button>;
+            })}</span>
+          </div>;
+        })}
+      </div>
+    </section>}
+    {ollamaSetup && <div className="modal-backdrop local-download-backdrop"><section className="local-download-dialog" role="dialog" aria-modal="true" data-ollama-installer-dialog>
+      <header><div><span className="settings-kicker"><Download size={13} />{t("localModels.ollamaInstallerKicker")}</span><h2>{t("localModels.ollamaInstallerTitle")}</h2><p>{ollamaSetup.mas ? t("localModels.ollamaMasBlocked") : t("localModels.ollamaInstallerHint")}</p></div><button className="icon-button" disabled={ollamaSetup.downloading} onClick={() => setOllamaSetup(null)}><X size={18} /></button></header>
+      <div className="local-download-body">
+        {ollamaSetup.message && <div className="local-model-error"><CircleHelp size={16} /><span>{ollamaSetup.message}</span></div>}
+        {ollamaSetup.installer && <div className="local-download-summary"><div><span>{t("localModels.version")}</span><strong>{ollamaSetup.installer.version}</strong></div><div><span>{t("localModels.downloadSize")}</span><strong>{formatModelBytes(ollamaSetup.installer.size, language)}</strong></div><div><span>SHA-256</span><strong title={ollamaSetup.installer.sha256}>{ollamaSetup.installer.sha256.slice(0, 16)}…</strong></div><div><span>{t("localModels.source")}</span><strong>ollama.com → GitHub Releases</strong></div></div>}
+        {!ollamaSetup.mas && ollamaSetup.supported && <label className="model-directory-field"><span>{t("localModels.installerPath")}</span><div><input readOnly value={ollamaSetup.destination} placeholder={t("localModels.installerPathPlaceholder")} /><button className="secondary compact" disabled={ollamaSetup.downloading} onClick={() => void chooseOllamaInstallerDestination()}><Folder size={15} />{t("localModels.choosePath")}</button></div><small>{t("localModels.ollamaInstallerRoute")}</small></label>}
+        {!ollamaSetup.mas && <div className="local-download-progress"><div><strong>{ollamaSetup.status}</strong><b>{ollamaSetup.total ? `${Math.min(100, Math.round(ollamaSetup.completed / ollamaSetup.total * 100))}%` : "0%"}</b></div><progress max={ollamaSetup.total || 1} value={ollamaSetup.completed} /><div className="download-metrics"><span><small>{t("localModels.downloaded")}</small><strong>{formatModelBytes(ollamaSetup.completed, language)} / {formatModelBytes(ollamaSetup.total, language)}</strong></span><span><small>{t("localModels.speed")}</small><strong>{ollamaSetup.speedBps ? `${formatModelBytes(ollamaSetup.speedBps, language)}/s` : "—"}</strong></span><span><small>{t("localModels.eta")}</small><strong>{ollamaSetup.speedBps ? formatDownloadEta((ollamaSetup.total - ollamaSetup.completed) / ollamaSetup.speedBps, language) : "—"}</strong></span></div></div>}
+      </div>
+      <footer><button className="secondary" disabled={ollamaSetup.downloading} onClick={() => setOllamaSetup(null)}>{t("common.close")}</button>{ollamaSetup.downloading ? <button className="secondary danger-soft" onClick={() => void window.aiTipDesktop?.cancelOllamaInstaller(ollamaSetup.requestId)}>{t("localModels.cancel")}</button> : <><button className="secondary" onClick={() => void recheckOllama()}><RefreshCw size={15} />{t("localModels.recheckOllama")}</button>{!ollamaSetup.mas && <button className="primary" disabled={!ollamaSetup.selectionToken} onClick={() => void startOllamaInstaller()}><Download size={16} />{t("localModels.downloadOfficialInstaller")}</button>}</>}</footer>
+    </section></div>}
+    {pending && <div className="modal-backdrop local-download-backdrop"><section className="local-download-dialog" role="dialog" aria-modal="true" data-local-download-dialog>
+      <header><div><span className="settings-kicker"><Download size={13} />{t("localModels.downloadKicker")}</span><h2>{t("localModels.downloadTitle", { model: pending.model.name })}</h2><p>{t("localModels.downloadHint")}</p></div><button className="icon-button" data-local-download-close disabled={Boolean(download)} onClick={() => setPending(null)}><X size={18} /></button></header>
+      <div className="local-download-body">
+        {error && <div className="local-model-error"><CircleHelp size={16} /><span>{error}</span><button onClick={() => setError("")}><X size={14} /></button></div>}
+        <div className="local-download-summary"><div><span>{t("localModels.source")}</span><strong>{language === "en" ? pending.source.labelEn : pending.source.labelZh}</strong></div><div><span>{t("localModels.quantization")}</span><strong>{pending.model.quantization}</strong></div><div><span>{t("localModels.downloadSize")}</span><strong>{formatModelBytes(pending.model.approxBytes, language)}</strong></div>{pending.freeBytes > 0 && <div><span>{t("localModels.freeSpace")}</span><strong>{formatModelBytes(pending.freeBytes, language)}</strong></div>}</div>
+        <label className="model-directory-field"><span>{t("localModels.directory")}</span><div><input readOnly data-model-directory value={pending.directory} placeholder={t("localModels.directoryPlaceholder")} /><button className="secondary compact" data-choose-model-directory disabled={Boolean(download)} onClick={() => void chooseDirectory()}><Folder size={15} />{t("localModels.chooseDirectory")}</button></div><small>{t("localModels.directoryHint")}</small></label>
+        <div className="local-download-progress" data-download-progress>
+          <div><strong>{download ? download.status : t("localModels.waiting")}</strong><b>{download ? `${percent}%` : "0%"}</b></div><progress max={download?.total || pending.model.approxBytes || 1} value={download?.completed || 0} />
+          {download?.networkStack === "chromium" && <small className="official-download-route"><ShieldCheck size={13} />{t("localModels.officialDirect", { host: download.finalHost || download.initialHost || (language === "en" ? pending.source.labelEn : pending.source.labelZh), proxy: download.proxyDescription || "—" })}</small>}
+          <div className="download-metrics"><span><small>{t("localModels.downloaded")}</small><strong>{download ? `${formatModelBytes(download.completed, language)} / ${formatModelBytes(download.total, language)}` : `0 MB / ${formatModelBytes(pending.model.approxBytes, language)}`}</strong></span><span><small>{t("localModels.speed")}</small><strong>{download?.speedBps ? `${formatModelBytes(download.speedBps, language)}/s` : "—"}</strong></span><span><small>{t("localModels.eta")}</small><strong>{download?.speedBps ? formatDownloadEta(remainingSeconds, language) : "—"}</strong></span></div>
+        </div>
+      </div>
+      <footer><button className="secondary" disabled={Boolean(download)} onClick={() => setPending(null)}>{t("common.close")}</button>{download ? <button className="secondary danger-soft" onClick={() => controller.current?.abort()}>{t("localModels.cancel")}</button> : <button className="primary" onClick={() => void startDownload()}><Download size={16} />{t("localModels.startDownload")}</button>}</footer>
+    </section></div>}
+  </main>;
+}
+
+function SettingsModal({ onClose, onOpenLocalModels, onSaved }: { onClose: () => void; onOpenLocalModels: () => void; onSaved: () => void }) {
   const { language, t } = useI18n();
   const languageRef = useRef(language);
   const [saved, setSaved] = useState<AiSettings | null>(null);
@@ -130,10 +421,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<"save" | "test" | "">("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
-  const [feedbackCategory, setFeedbackCategory] = useState<"feature" | "accuracy" | "bug" | "usability" | "other">("feature");
-  const [feedbackText, setFeedbackText] = useState("");
-  const [feedbackBusy, setFeedbackBusy] = useState(false);
-  const [feedbackMessage, setFeedbackMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelsBusy, setModelsBusy] = useState(false);
   const providerOptions = Object.values(PROVIDER_REGISTRY);
@@ -172,6 +459,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         const result = await api.updateSettings(draft, language);
         setSaved(result.settings);
         setDraft((current) => ({ ...current, apiKey: "", clearApiKey: false, searchApiKey: "", clearSearchApiKey: false }));
+        onSaved();
         setMessage({ kind: "ok", text: t("settings.saved") });
       }
     } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : t("settings.failed") }); }
@@ -186,18 +474,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
     } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : t("settings.failed") }); }
     finally { setModelsBusy(false); }
   };
-  const submitFeedback = async () => {
-    if (feedbackText.trim().length < 10 || feedbackBusy) return;
-    setFeedbackBusy(true); setFeedbackMessage(null);
-    try {
-      await api.submitFeedback(feedbackCategory, feedbackText.trim());
-      setFeedbackText("");
-      setFeedbackMessage({ kind: "ok", text: t("feedback.sent") });
-    } catch (error) {
-      setFeedbackMessage({ kind: "error", text: error instanceof Error ? error.message : t("feedback.failed") });
-    } finally { setFeedbackBusy(false); }
-  };
-
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header><div><span className="settings-kicker"><Settings size={13} />{t("settings.kicker")}</span><h2 id="settings-title">{t("settings.title")}</h2><p>{t("settings.subtitle")}</p></div><button className="icon-button" onClick={onClose} aria-label={t("common.close")}><X size={18} /></button></header>
@@ -207,7 +483,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <label>{t("settings.provider")}<select value={draft.provider} onChange={(event) => changeProvider(event.target.value as ApiProvider)}>{providerOptions.map((item) => <option key={item.id} value={item.id}>{t(item.labelKey)}</option>)}</select></label>
           <label>{t("settings.model")}<input list="provider-models" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder={providerDefinition(draft.provider).defaultModel} /><datalist id="provider-models">{availableModels.map((model) => <option key={model} value={model} />)}</datalist></label>
         </div>
-        <div className="model-refresh-row"><button type="button" className="secondary compact" onClick={() => void refreshModels()} disabled={modelsBusy}>{modelsBusy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{modelsBusy ? t("settings.refreshingModels") : t("settings.refreshModels")}</button><small>{t("settings.modelsHint")} · {t("settings.registryDate", { date: PROVIDER_REGISTRY_VERIFIED_AT })}</small></div>
+        <div className="model-refresh-row"><button type="button" className="secondary compact" onClick={() => void refreshModels()} disabled={modelsBusy}>{modelsBusy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{modelsBusy ? t("settings.refreshingModels") : t("settings.refreshModels")}</button><button type="button" className="secondary compact" onClick={onOpenLocalModels}><Download size={14} />{t("settings.localModels")}</button><small>{t("settings.modelsHint")} · {t("settings.registryDate", { date: PROVIDER_REGISTRY_VERIFIED_AT })}</small></div>
         <label>{t("settings.apiUrl")}<input value={draft.baseURL} onChange={(event) => setDraft({ ...draft, baseURL: event.target.value })} placeholder="https://api.example.com/v1" /></label>
         <label>{t("settings.apiKey")}<input type="password" value={draft.apiKey || ""} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value, clearApiKey: false })} placeholder={saved?.apiKeyConfigured ? t("settings.savedKey", { mask: saved.apiKeyMasked }) : t("settings.enterKey")} /></label>
         {saved?.apiKeyConfigured && <label className="clear-key"><input type="checkbox" checked={Boolean(draft.clearApiKey)} onChange={(event) => setDraft({ ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey })} />{t("settings.removeKey")}</label>}
@@ -222,14 +498,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           {draft.reliabilityEnabled && <div className="reliability-list">{Array.from({ length: 12 }, (_, index) => t(`settings.check.${index + 1}`)).map((item) => <span key={item}><Check size={10} />{item}</span>)}</div>}
         </div>
         <div className="settings-note"><Brain size={16} /><span><strong>{t("settings.memoryTitle")}</strong>{t("settings.memoryText")}</span></div>
-        <section className="feedback-box" aria-labelledby="feedback-title">
-          <header><span><MessageCircleMore size={16} /></span><div><h3 id="feedback-title">{t("feedback.title")}</h3><p>{t("feedback.hint")}</p></div></header>
-          <label>{t("feedback.category")}<select value={feedbackCategory} onChange={(event) => setFeedbackCategory(event.target.value as typeof feedbackCategory)}><option value="feature">{t("feedback.feature")}</option><option value="accuracy">{t("feedback.accuracy")}</option><option value="bug">{t("feedback.bug")}</option><option value="usability">{t("feedback.usability")}</option><option value="other">{t("feedback.other")}</option></select></label>
-          <label><textarea rows={5} maxLength={4000} value={feedbackText} onChange={(event) => { setFeedbackText(event.target.value); if (feedbackMessage?.kind === "error") setFeedbackMessage(null); }} placeholder={t("feedback.placeholder")} /><small>{t("feedback.length", { count: feedbackText.length })}</small></label>
-          <div className="feedback-privacy"><ShieldCheck size={13} />{t("feedback.privacy")}</div>
-          {feedbackMessage && <div className={`settings-message ${feedbackMessage.kind}`}>{feedbackMessage.kind === "ok" ? <CheckCircle2 size={16} /> : <CircleHelp size={16} />}{feedbackMessage.text}</div>}
-          <button className="secondary feedback-submit" onClick={() => void submitFeedback()} disabled={feedbackBusy || feedbackText.trim().length < 10}>{feedbackBusy ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}{feedbackBusy ? t("feedback.sending") : t("feedback.submit")}</button>
-        </section>
         {message && <div className={`settings-message ${message.kind}`}>{message.kind === "ok" ? <CheckCircle2 size={16} /> : <CircleHelp size={16} />}{message.text}</div>}
       </div>}
       <footer><button className="secondary" onClick={() => void run("test")} disabled={loading || Boolean(busy)}>{busy === "test" ? <LoaderCircle className="spin" size={16} /> : <Zap size={16} />}{t("settings.test")}</button><button className="primary" onClick={() => void run("save")} disabled={loading || Boolean(busy)}>{busy === "save" ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{t("settings.save")}</button></footer>
@@ -244,6 +512,27 @@ interface NavProps {
 
 function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSettings }: NavProps) {
   const { t } = useI18n();
+  const [contactCopyState, setContactCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyContact = async () => {
+    let copied = false;
+    try {
+      if (window.aiTipDesktop?.copyText) await window.aiTipDesktop.copyText(CONTACT_EMAIL);
+      else await navigator.clipboard.writeText(CONTACT_EMAIL);
+      copied = true;
+    } catch {
+      const input = document.createElement("textarea");
+      input.value = CONTACT_EMAIL;
+      input.setAttribute("readonly", "");
+      input.style.position = "fixed";
+      input.style.opacity = "0";
+      document.body.appendChild(input);
+      input.select();
+      try { copied = document.execCommand("copy"); } catch { copied = false; }
+      input.remove();
+    }
+    setContactCopyState(copied ? "copied" : "failed");
+    window.setTimeout(() => setContactCopyState("idle"), 2400);
+  };
   return (
     <aside className="app-nav">
       <div className="brand"><span className="brand-mark"><Sparkles size={17} /></span>AI Tip</div>
@@ -261,7 +550,9 @@ function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSetting
         <button className={tab === "trash" ? "active" : ""} onClick={() => onTab("trash")}><Trash2 size={18} />{t("nav.trash")}<span>{counts.trash}</span></button>
       </nav>
       <div className="nav-bottom">
-        <button onClick={onSettings}><Settings size={18} />{t("nav.settings")}</button>
+        <button className="contact-copy-button" data-contact-copy onClick={() => void copyContact()} title={t("nav.contact")}><Mail size={17} /><span>{t("nav.contact")}</span></button>
+        <span className={`contact-copy-status ${contactCopyState}`} data-contact-copy-status aria-live="polite">{contactCopyState === "copied" ? t("nav.contactCopied") : contactCopyState === "failed" ? t("nav.contactCopyFailed") : ""}</span>
+        <button data-open-settings onClick={onSettings}><Settings size={18} />{t("nav.settings")}</button>
         <div className="user-row">
           <div className="avatar">{user.name.slice(0, 1)}</div>
           <div><strong>{user.name}</strong><span>{user.email}</span></div>
@@ -282,12 +573,15 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
   const [sort, setSort] = useState("updated");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [cloudUsage, setCloudUsage] = useState<CloudUsage | null>(null);
+  const [cloudBusyId, setCloudBusyId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
-      const [active, deleted] = await Promise.all([api.documents("active"), api.documents("deleted")]);
+      const [active, deleted, usage] = await Promise.all([api.documents("active"), api.documents("deleted"), user.authMode === "supabase" ? api.cloudUsage().catch(() => null) : Promise.resolve(null)]);
       setDocuments(active.documents); setTrash(deleted.documents);
+      if (usage) setCloudUsage(usage.usage);
     } catch (err) { setError(err instanceof Error ? err.message : t("library.loadFailed")); }
     finally { setLoading(false); }
   }, []);
@@ -304,6 +598,19 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
     if (permanent && !window.confirm(t("library.deleteConfirm"))) return;
     try { await api.deleteDocument(document.id, permanent); await load(); } catch (err) { setError(err instanceof Error ? err.message : t("library.operationFailed")); }
   };
+  const syncCloud = async (document: DocumentItem) => {
+    setCloudBusyId(document.id); setError("");
+    try { const result = await api.uploadDocumentToCloud(document.id); setCloudUsage(result.usage); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : t("cloud.failed")); }
+    finally { setCloudBusyId(""); }
+  };
+  const removeCloud = async (document: DocumentItem) => {
+    if (!window.confirm(t("cloud.removeConfirm"))) return;
+    setCloudBusyId(document.id); setError("");
+    try { const result = await api.removeDocumentFromCloud(document.id); setCloudUsage(result.usage); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : t("cloud.failed")); }
+    finally { setCloudBusyId(""); }
+  };
 
   const base = screen.tab === "trash" ? trash : screen.tab === "favorites" ? documents.filter((d) => d.favorite) : documents;
   const filtered = base.filter((item) => item.title.toLowerCase().includes(query.toLowerCase())).sort((a, b) => {
@@ -319,7 +626,7 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
       <AppNav user={user} tab={screen.tab} counts={{ all: documents.length, favorite: documents.filter((d) => d.favorite).length, trash: trash.length }} onTab={(tab) => onScreen({ type: "library", tab })} onNew={() => void create()} onUpload={onUpload} onLogout={onLogout} onSettings={onSettings} />
       <main className="library-main">
         <header className="library-header">
-          <div><p className="overline">{t("library.space")}</p><h1>{title}</h1><p>{screen.tab === "trash" ? t("library.trashDescription") : t("library.description")}</p></div>
+          <div><p className="overline">{t("library.space")}</p><h1>{title}</h1><p>{screen.tab === "trash" ? t("library.trashDescription") : user.authMode === "supabase" ? t("cloud.localOnlyHint") : t("library.description")}</p>{user.authMode === "supabase" && <p className="cloud-usage"><Cloud size={13} />{cloudUsage ? t("cloud.usage", { used: (cloudUsage.usedBytes / 1048576).toFixed(2) }) : t("cloud.quota")}</p>}</div>
           <div className="header-actions"><button className="secondary" onClick={onUpload}><Upload size={17} />{t("nav.import")}</button><button className="primary" onClick={() => void create()}><Plus size={17} />{t("nav.new")}</button></div>
         </header>
         <section className="library-toolbar">
@@ -337,14 +644,15 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
                 <button className={`favorite-button ${document.favorite ? "active" : ""}`} title={document.favorite ? t("library.unfavorite") : t("library.favorite")} onClick={(e) => { e.stopPropagation(); void patch(document, { favorite: !document.favorite }); }}><Heart size={17} fill={document.favorite ? "currentColor" : "none"} /></button>
                 <div className="doc-copy"><h3>{document.title}</h3><p>{document.blocks.find((b) => b.content.trim())?.content.slice(0, 88) || t("library.blank")}</p></div>
                 <div className="doc-meta"><span><MessageCircleMore size={14} />{document.tipCount} Tips</span><span>{timeAgo(document.updatedAt, language, t)}</span></div>
+                {user.authMode === "supabase" && <span className={`cloud-state ${document.cloudState || "local"}`}>{document.cloudState === "synced" ? t("cloud.synced") : document.cloudState === "modified" ? t("cloud.modified") : t("cloud.local")}</span>}
                 <div className="card-actions" onClick={(e) => e.stopPropagation()}>
-                  {screen.tab === "trash" ? <><button onClick={() => void patch(document, { status: "active" })}><ArchiveRestore size={15} />{t("library.restore")}</button><button className="danger-text" onClick={() => void remove(document, true)}><Trash2 size={15} />{t("library.permanentDelete")}</button></> : <button onClick={() => void remove(document)}><Trash2 size={15} />{t("library.moveTrash")}</button>}
+                  {screen.tab === "trash" ? <><button onClick={() => void patch(document, { status: "active" })}><ArchiveRestore size={15} />{t("library.restore")}</button><button className="danger-text" onClick={() => void remove(document, true)}><Trash2 size={15} />{t("library.permanentDelete")}</button></> : <>{user.authMode === "supabase" && document.cloudState !== "synced" && <button className="cloud-action" disabled={cloudBusyId === document.id} onClick={() => void syncCloud(document)}>{cloudBusyId === document.id ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{document.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}{user.authMode === "supabase" && document.cloudState === "synced" && <button onClick={() => void removeCloud(document)}><CloudOff size={15} />{t("cloud.remove")}</button>}<button onClick={() => void remove(document)}><Trash2 size={15} />{t("library.moveTrash")}</button></>}
                 </div>
               </article>
             ))}
           </section>
         )}
-        <footer className="library-foot"><span>{t("library.count", { count: filtered.length })}</span><span><Cloud size={14} />{t("library.localSaved")}</span></footer>
+        <footer className="library-foot"><span>{t("library.count", { count: filtered.length })}</span><span><Cloud size={14} />{user.authMode === "supabase" ? t("library.cloudSaved") : t("library.localSaved")}</span></footer>
       </main>
     </div>
   );
@@ -419,12 +727,21 @@ function tableRectForOffsets(root: HTMLElement, rows: string[][], start: number,
 
 type EditableBlockPatch = { content: string; table?: PdfTableData };
 
+function EditableTableCell({ as: Tag, content, rowIndex, cellIndex, colSpan, rowSpan, onInput }: { as: "th" | "td"; content: string; rowIndex: number; cellIndex: number; colSpan: number; rowSpan: number; onInput: (content: string) => void }) {
+  const ref = useRef<HTMLTableCellElement>(null);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element && document.activeElement !== element && element.innerText !== content) element.innerText = content;
+  }, [content]);
+  return <Tag ref={ref as never} data-table-cell={`${rowIndex}:${cellIndex}`} colSpan={colSpan} rowSpan={rowSpan} contentEditable suppressContentEditableWarning spellCheck onInput={(event) => onInput(event.currentTarget.innerText)} />;
+}
+
 function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item: DocumentBlock; tips: TipThread[]; onChange: (id: string, patch: EditableBlockPatch) => void; onSelection: (selection: SelectionInfo) => void; onOpenTip: (tip: TipThread) => void }) {
   const { t } = useI18n();
   const ref = useRef<HTMLElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const [markerPositions, setMarkerPositions] = useState<Record<string, { left: number; top: number }>>({});
-  useEffect(() => { if (item.type !== "table" && ref.current && document.activeElement !== ref.current && ref.current.innerText !== item.content) ref.current.innerText = item.content; }, [item.content, item.type]);
+  useLayoutEffect(() => { if (item.type !== "table" && ref.current && document.activeElement !== ref.current && ref.current.innerText !== item.content) ref.current.innerText = item.content; }, [item.id, item.content, item.type]);
   useLayoutEffect(() => {
     const measure = () => {
       const root = ref.current; const row = rowRef.current;
@@ -484,7 +801,7 @@ function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item:
         <table ref={ref as React.Ref<HTMLTableElement>} className="word-table" data-block-id={item.id} data-word-table onMouseUp={select} onKeyUp={select}><tbody>{item.table.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((content, cellIndex) => {
           const metadata = item.table!.cells?.[rowIndex]?.[cellIndex];
           const Tag = metadata?.header || rowIndex < item.table!.headerRows ? "th" : "td";
-          return <Tag key={cellIndex} data-table-cell={`${rowIndex}:${cellIndex}`} colSpan={metadata?.colSpan || 1} rowSpan={metadata?.rowSpan || 1} contentEditable suppressContentEditableWarning spellCheck onInput={(event) => editCell(rowIndex, cellIndex, event.currentTarget.innerText)}>{content}</Tag>;
+          return <EditableTableCell key={cellIndex} as={Tag} content={content} rowIndex={rowIndex} cellIndex={cellIndex} colSpan={metadata?.colSpan || 1} rowSpan={metadata?.rowSpan || 1} onInput={(nextContent) => editCell(rowIndex, cellIndex, nextContent)} />;
         })}</tr>)}</tbody></table>
       </div>
       {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <TipMarkerButton key={tip.id} tip={tip} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onOpen={onOpenTip} openLabel={t("tip.open", { title: tip.title })} previewLabel={t("tip.fullPreview")} closeLabel={t("common.close")}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</TipMarkerButton>)}</div>}
@@ -494,7 +811,7 @@ function EditableBlock({ item, tips, onChange, onSelection, onOpenTip }: { item:
   return (
     <div ref={rowRef} className={`block-row block-${item.type}`} data-block-row={item.id}>
       {item.type === "list_item" && <span className="list-bullet">•</span>}
-      <Tag ref={ref as never} data-block-id={item.id} contentEditable suppressContentEditableWarning spellCheck onInput={(e) => onChange(item.id, { content: e.currentTarget.innerText })} onMouseUp={select} onKeyUp={select}>{item.content}</Tag>
+      <Tag ref={ref as never} data-block-id={item.id} contentEditable suppressContentEditableWarning spellCheck onInput={(e) => onChange(item.id, { content: e.currentTarget.innerText })} onMouseUp={select} onKeyUp={select} />
       {tips.length > 0 && <div className="tip-marker-layer">{tips.map((tip) => <TipMarkerButton key={tip.id} tip={tip} style={markerPositions[tip.id]} className={`tip-marker ${tip.status === "resolved" ? "resolved" : ""} ${tip.anchorStatus === "orphaned" ? "orphaned" : ""}`} onOpen={onOpenTip} openLabel={t("tip.open", { title: tip.title })} previewLabel={t("tip.fullPreview")} closeLabel={t("common.close")}><Sparkles size={10} /><span>TIP</span>{tip.messages.length > 0 && <small>{tip.messages.length}</small>}</TipMarkerButton>)}</div>}
     </div>
   );
@@ -523,13 +840,17 @@ function messagePresentation(content: string) {
 
 function renderMessageRange(content: string, start = 0, end?: number, keyPrefix = "message") {
   const presentation = messagePresentation(content); const limit = end ?? presentation.plain.length;
+  const links = httpLinkRanges(presentation.plain);
   const boundaries = new Set([start, limit]);
   for (const range of presentation.bold) { if (range.start > start && range.start < limit) boundaries.add(range.start); if (range.end > start && range.end < limit) boundaries.add(range.end); }
+  for (const range of links) { if (range.start > start && range.start < limit) boundaries.add(range.start); if (range.end > start && range.end < limit) boundaries.add(range.end); }
   const sorted = [...boundaries].sort((a, b) => a - b); const nodes: React.ReactNode[] = [];
   for (let index = 0; index < sorted.length - 1; index++) {
     const from = sorted[index]; const to = sorted[index + 1]; const value = presentation.plain.slice(from, to);
     const isBold = presentation.bold.some((range) => from >= range.start && to <= range.end);
-    nodes.push(isBold ? <strong key={`${keyPrefix}-${from}`}>{value}</strong> : <span key={`${keyPrefix}-${from}`}>{value}</span>);
+    const link = links.find((range) => from >= range.start && to <= range.end);
+    const rendered = isBold ? <strong>{value}</strong> : value;
+    nodes.push(link ? <a data-message-link key={`${keyPrefix}-${from}`} href={link.url} target="_blank" rel="noreferrer">{rendered}</a> : <span key={`${keyPrefix}-${from}`}>{rendered}</span>);
   }
   return nodes;
 }
@@ -588,14 +909,14 @@ function SkillResults({ skills }: { skills?: SkillTrace[] }) {
   return <details className="skill-results" data-skill-results>
     <summary><span><Zap size={12} />{t("tip.toolsSummary", { count: skills.length })}</span>{warnings > 0 && <small>{t("tip.toolsWarnings", { count: warnings })}</small>}<ChevronDown size={13} /></summary>
     <div className="skill-results-body">{skills.map((skill, index) => <div className={`skill-result ${skill.name} ${skill.status || "success"}`} key={`${skill.name}-${index}`}>
-      <span>{["web_search", "web_fetch", "cross_check", "conflict_check", "freshness_check"].includes(skill.name) ? <Globe2 size={12} /> : ["python", "unit_check", "uncertainty", "symbolic_math", "data_analysis"].includes(skill.name) ? <Calculator size={12} /> : <ShieldCheck size={12} />}{skill.label}</span><small>{skill.detail}</small>
+      <span>{["web_search", "web_fetch", "cross_check", "conflict_check", "freshness_check", "manual_lookup"].includes(skill.name) ? <Globe2 size={12} /> : ["python", "unit_check", "uncertainty", "symbolic_math", "data_analysis"].includes(skill.name) ? <Calculator size={12} /> : <ShieldCheck size={12} />}{skill.label}</span><small>{skill.detail}</small>
       {skill.sources?.length ? <div className="skill-sources">{skill.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}</div> : null}
     </div>)}</div>
   </details>;
 }
 
-interface TipPanelProps { tip: TipThread; childTips: TipThread[]; streamingText: string; streamingSkills: SkillTrace[]; isStreaming: boolean; error: string; contextMode?: boolean; onSend: (question: string) => void; onStop: () => void; onCollapse: () => void; onFocus?: () => void; onResolve: () => void; onDelete: () => void; onToggleMemory: () => void; onMessageSelection: (selection: ChatSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; }
-function TipPanel({ tip, childTips, streamingText, streamingSkills, isStreaming, error, contextMode = false, onSend, onStop, onCollapse, onFocus, onResolve, onDelete, onToggleMemory, onMessageSelection, onOpenTip }: TipPanelProps) {
+interface TipPanelProps { tip: TipThread; childTips: TipThread[]; modelStatus: AiRuntimeStatus | null; webSearchEnabled: boolean | null; webSearchBusy: boolean; streamingText: string; streamingSkills: SkillTrace[]; isStreaming: boolean; error: string; contextMode?: boolean; onSend: (question: string) => void; onStop: () => void; onToggleWebSearch: () => void; onCollapse: () => void; onFocus?: () => void; onResolve: () => void; onDelete: () => void; onToggleMemory: () => void; onMessageSelection: (selection: ChatSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; onOpenSettings: () => void; onOpenLocalModels: () => void; }
+function TipPanel({ tip, childTips, modelStatus, webSearchEnabled, webSearchBusy, streamingText, streamingSkills, isStreaming, error, contextMode = false, onSend, onStop, onToggleWebSearch, onCollapse, onFocus, onResolve, onDelete, onToggleMemory, onMessageSelection, onOpenTip, onOpenSettings, onOpenLocalModels }: TipPanelProps) {
   const { language, t } = useI18n();
   const [question, setQuestion] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -603,7 +924,8 @@ function TipPanel({ tip, childTips, streamingText, streamingSkills, isStreaming,
     const messageList = messageListRef.current;
     if (messageList) messageList.scrollTop = messageList.scrollHeight;
   }, [tip.id, tip.messages.length, streamingText]);
-  const submit = () => { if (!question.trim() || isStreaming) return; onSend(question.trim()); setQuestion(""); };
+  const modelReady = modelStatus?.configured === true;
+  const submit = () => { if (!question.trim() || isStreaming || !modelReady) return; onSend(question.trim()); setQuestion(""); };
   const prompts = language === "en"
     ? [
       ["tip.simple", "Explain this passage in plain language."],
@@ -622,15 +944,16 @@ function TipPanel({ tip, childTips, streamingText, streamingSkills, isStreaming,
       <header className="tip-head"><div><span className="tip-kicker"><Sparkles size={13} />{contextMode ? t("tip.parentConversation") : t("tip.independent")}</span><h2>{tip.title}</h2></div>{contextMode ? <button className="icon-button" onClick={onFocus} title={t("tip.focusConversation")}><ChevronLeft size={18} /></button> : <button className="icon-button" onClick={onCollapse} title={t("tip.collapse")}><PanelRightClose size={18} /></button>}</header>
       <div className="selected-quote"><p>{tip.anchorType === "message" ? t("tip.selectedChat") : tip.anchorType === "pdf" ? t("tip.selectedPdf", { page: tip.pdfAnchor?.pageNumber || 1 }) : t("tip.selected")}</p><blockquote>{tip.selectedText}</blockquote><div className="tip-context-controls"><span className={`anchor-badge ${tip.anchorStatus}`}>{tip.anchorStatus === "valid" ? t("tip.anchorValid") : tip.anchorStatus === "recovered" ? t("tip.anchorRecovered") : t("tip.anchorLost")}</span><button className={tip.memoryEnabled === false ? "" : "active"} onClick={onToggleMemory} title={t("tip.memoryHint")}><Brain size={12} />{tip.memoryEnabled === false ? t("tip.memoryOff") : t("tip.memoryOn")}</button></div></div>
       <div ref={messageListRef} className="message-list">
-        {tip.messages.length === 0 && !streamingText && <div className="tip-welcome"><div><WandSparkles size={20} /></div><h3>{t("tip.start")}</h3><p>{t("tip.welcome")}</p><div className="tip-prompts">{prompts.map(([key, prompt]) => <button key={key} onClick={() => onSend(prompt)}>{t(key)}</button>)}</div></div>}
+        {tip.messages.length === 0 && !streamingText && modelReady && <div className="tip-welcome"><div><WandSparkles size={20} /></div><h3>{t("tip.start")}</h3><p>{t("tip.welcome")}</p><div className="tip-prompts">{prompts.map(([key, prompt]) => <button key={key} onClick={() => onSend(prompt)}>{t(key)}</button>)}</div></div>}
         {tip.messages.map((message) => <div className={`message ${message.role}`} key={message.id} data-message-id={message.id}>{message.role === "assistant" && <span className="assistant-mark"><Sparkles size={13} /></span>}<div>{message.role === "assistant" && <SkillResults skills={message.skills} />}<MessageContent tip={tip} message={message} childTips={childTips} onSelection={onMessageSelection} onOpenTip={onOpenTip} />{message.role === "assistant" && <button className="copy-message" onClick={() => void navigator.clipboard.writeText(message.content)}><Copy size={13} />{t("common.copy")}</button>}</div></div>)}
         {isStreaming && <div className="message assistant"><span className="assistant-mark"><Sparkles size={13} /></span><div><SkillResults skills={streamingSkills} />{streamingText ? renderMessage(streamingText) : streamingSkills.length ? <span className="tool-thinking">{t("tip.checkingTools")}</span> : <span className="thinking"><i /><i /><i /></span>}<span className="cursor" /></div></div>}
         {error && <div className="chat-error"><CircleHelp size={15} />{error}</div>}
+        {!modelReady && <div className="tip-model-required" data-model-required={modelStatus?.reason || "checking"}><div>{modelStatus ? <Cpu size={20} /> : <LoaderCircle className="spin" size={20} />}</div><h3>{modelStatus ? t("tip.modelRequiredTitle") : t("tip.modelChecking")}</h3><p>{modelStatus?.reason === "ollama-unreachable" || modelStatus?.reason === "invalid-local-endpoint" ? t("tip.ollamaUnavailable") : modelStatus?.reason === "model-not-installed" ? t("tip.localModelMissing") : modelStatus ? t("tip.modelRequired") : t("tip.modelCheckingHint")}</p>{modelStatus && <div><button className="secondary compact" onClick={onOpenSettings}><Settings size={14} />{t("tip.configureApi")}</button><button className="primary compact" onClick={onOpenLocalModels}><Download size={14} />{t("tip.downloadLocal")}</button></div>}</div>}
         <div />
       </div>
       <div className="tip-composer">
-        <textarea value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} placeholder={t("tip.followup")} rows={3} />
-        <div><span>{t("tip.sendHint")}</span>{isStreaming ? <button className="stop-button" onClick={onStop}><Square size={13} fill="currentColor" />{t("tip.stop")}</button> : <button className="send-button" disabled={!question.trim()} onClick={submit}><Send size={15} /></button>}</div>
+        <textarea disabled={!modelReady} value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} placeholder={modelReady ? t("tip.followup") : t("tip.modelRequiredPlaceholder")} rows={3} />
+        <div><span>{t("tip.sendHint")}</span><div className="tip-composer-actions"><button className={`composer-web-search ${webSearchEnabled ? "on" : "off"}`} data-chat-web-search-toggle aria-pressed={webSearchEnabled === true} disabled={webSearchEnabled === null || webSearchBusy || isStreaming} onClick={onToggleWebSearch} title={webSearchBusy ? t("tip.webSearchUpdating") : t("tip.webSearchHint")}><Globe2 size={13} /><span>{webSearchEnabled ? t("tip.webSearchOn") : t("tip.webSearchOff")}</span><i /></button>{isStreaming ? <button className="stop-button" onClick={onStop}><Square size={13} fill="currentColor" />{t("tip.stop")}</button> : <button className="send-button" disabled={!question.trim() || !modelReady} onClick={submit}><Send size={15} /></button>}</div></div>
       </div>
       {!contextMode && <footer className="tip-actions"><button onClick={onResolve}><CheckCircle2 size={15} />{tip.status === "resolved" ? t("tip.resolved") : t("tip.resolve")}</button><button className="danger-text" onClick={onDelete}><Trash2 size={15} />{t("common.delete")}</button></footer>}
     </aside>
@@ -645,8 +968,8 @@ function SaveIndicator({ state }: { state: SaveState }) {
   return <span className="save-state"><Check size={14} />{t("save.saved")}</span>;
 }
 
-interface EditorProps { id: string; onBack: () => void; onSettings: () => void; onRegisterSave: (save: (() => Promise<void>) | null) => void; }
-function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
+interface EditorProps { id: string; cloudEnabled: boolean; settingsRevision: number; onBack: () => void; onSettings: () => void; onOpenLocalModels: () => void; onRegisterSave: (save: (() => Promise<void>) | null) => void; }
+function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, onOpenLocalModels, onRegisterSave }: EditorProps) {
   const { language, t } = useI18n();
   const [documentItem, setDocumentItem] = useState<DocumentItem | null>(null);
   const [tips, setTips] = useState<TipThread[]>([]);
@@ -663,6 +986,10 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
   const [treeOpen, setTreeOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(true);
   const [outlineOpen, setOutlineOpen] = useState(true);
+  const [modelStatus, setModelStatus] = useState<AiRuntimeStatus | null>(null);
+  const [webSearchEnabled, setWebSearchEnabled] = useState<boolean | null>(null);
+  const [webSearchBusy, setWebSearchBusy] = useState(false);
+  const [cloudBusy, setCloudBusy] = useState(false);
   const dirty = useRef(false);
   const editVersion = useRef(0);
   const documentRef = useRef<DocumentItem | null>(null);
@@ -674,6 +1001,17 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
     catch (err) { setError(err instanceof Error ? err.message : t("editor.loadFailed")); }
   }, [id, t]);
   useEffect(() => { void load(); return () => controller.current?.abort(); }, [load]);
+  const refreshModelStatus = useCallback(async () => {
+    try { setModelStatus((await api.aiStatus()).status); }
+    catch { setModelStatus({ configured: false, provider: "openai", model: "", reason: "no-api-key", local: false }); }
+  }, []);
+  useEffect(() => { setModelStatus(null); void refreshModelStatus(); }, [refreshModelStatus, settingsRevision]);
+  useEffect(() => {
+    let active = true;
+    void api.settings().then(({ settings }) => { if (active) setWebSearchEnabled(settings.webSearchEnabled); })
+      .catch(() => { if (active) setWebSearchEnabled(null); });
+    return () => { active = false; };
+  }, [settingsRevision]);
   useLayoutEffect(() => { documentRef.current = documentItem; }, [documentItem]);
 
   const saveNow = useCallback(async () => {
@@ -735,6 +1073,12 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
     try { await saveNow(); }
     catch { setSaveState("error"); }
   };
+  const uploadCloud = async () => {
+    setCloudBusy(true); setError("");
+    try { await saveNow(); const result = await api.uploadDocumentToCloud(id); documentRef.current = result.document; setDocumentItem(result.document); }
+    catch (err) { setError(err instanceof Error ? err.message : t("cloud.failed")); }
+    finally { setCloudBusy(false); }
+  };
   const leaveEditor = async () => {
     try { await saveNow(); onBack(); }
     catch { setSaveState("error"); }
@@ -781,7 +1125,7 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
   };
   const openTip = (tip: TipThread) => { if (isStreaming && streamingTipId !== tip.id) controller.current?.abort(); setActiveTipId(tip.id); setSelection(null); setChatError(""); setChatErrorTipId(null); if (tip.status === "collapsed") void patchTip(tip.id, { status: "open" }); };
   const send = async (tipId: string, question: string) => {
-    if (isStreaming) return;
+    if (isStreaming || !modelStatus?.configured) return;
     setIsStreaming(true); setStreamingTipId(tipId); setStreamingText(""); setStreamingSkills([]); setChatError(""); setChatErrorTipId(null);
     const ctrl = new AbortController(); controller.current = ctrl;
     setTips((current) => current.map((tip) => tip.id === tipId ? { ...tip, messages: [...tip.messages, { id: `temp-${Date.now()}`, tipId: tip.id, role: "user", content: question, createdAt: new Date().toISOString() }] } : tip));
@@ -789,9 +1133,23 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
       const finalTip = await api.streamTip(tipId, question, language, ctrl.signal, (chunk) => setStreamingText((text) => text + chunk), (skill) => setStreamingSkills((current) => [...current, skill]));
       setTips((current) => current.map((tip) => tip.id === tipId ? finalTip : tip)); setStreamingText(""); setStreamingSkills([]);
     } catch (err) {
-      if ((err as Error).name !== "AbortError") { setChatError(err instanceof Error ? err.message : t("editor.generateFailed")); setChatErrorTipId(tipId); }
+      if ((err as Error).name !== "AbortError") {
+        setChatError(err instanceof Error ? err.message : t("editor.generateFailed")); setChatErrorTipId(tipId);
+        if (err instanceof ApiError && ["MODEL_NOT_CONFIGURED", "LOCAL_MODEL_NOT_INSTALLED", "LOCAL_RUNTIME_UNAVAILABLE"].includes(err.code)) void refreshModelStatus();
+      }
       await load();
     } finally { setIsStreaming(false); setStreamingTipId(null); controller.current = null; }
+  };
+  const toggleWebSearch = async (tipId: string) => {
+    if (webSearchEnabled === null || webSearchBusy || isStreaming) return;
+    setWebSearchBusy(true); setChatError(""); setChatErrorTipId(null);
+    try {
+      const { settings } = await api.updateWebSearchEnabled(!webSearchEnabled, language);
+      setWebSearchEnabled(settings.webSearchEnabled);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : t("tip.webSearchUpdateFailed"));
+      setChatErrorTipId(tipId);
+    } finally { setWebSearchBusy(false); }
   };
   const deleteTip = async (tipId: string) => {
     if (!window.confirm(t("tip.deleteConfirm"))) return;
@@ -821,13 +1179,14 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
   if (!documentItem) return <div className="loading-state fullscreen"><LoaderCircle className="spin" /><span>{t("editor.opening")}</span></div>;
   const renderTipPanel = (tip: TipThread, contextMode = false) => <TipPanel
     key={`${contextMode ? "context" : "active"}-${tip.id}`} tip={tip} childTips={childrenOf(tip.id)} contextMode={contextMode}
+    modelStatus={modelStatus} webSearchEnabled={webSearchEnabled} webSearchBusy={webSearchBusy}
     streamingText={streamingTipId === tip.id ? streamingText : ""} streamingSkills={streamingTipId === tip.id ? streamingSkills : []}
     isStreaming={isStreaming && streamingTipId === tip.id} error={chatErrorTipId === tip.id ? chatError : ""}
-    onSend={(question) => void send(tip.id, question)} onStop={() => { if (streamingTipId === tip.id) controller.current?.abort(); }}
+    onSend={(question) => void send(tip.id, question)} onStop={() => { if (streamingTipId === tip.id) controller.current?.abort(); }} onToggleWebSearch={() => void toggleWebSearch(tip.id)}
     onCollapse={() => collapseTip(tip)} onFocus={() => openTip(tip)}
     onResolve={() => void patchTip(tip.id, { status: tip.status === "resolved" ? "open" : "resolved" })}
     onDelete={() => void deleteTip(tip.id)} onToggleMemory={() => void patchTip(tip.id, { memoryEnabled: tip.memoryEnabled === false })}
-    onMessageSelection={setSelection} onOpenTip={openTip}
+    onMessageSelection={setSelection} onOpenTip={openTip} onOpenSettings={onSettings} onOpenLocalModels={onOpenLocalModels}
   />;
   return (
     <div className={`editor-shell ${activeTip ? "with-tip" : ""} ${!navOpen ? "nav-hidden" : ""}`} data-editor-document={documentItem.id}>
@@ -841,7 +1200,7 @@ function EditorScreen({ id, onBack, onSettings, onRegisterSave }: EditorProps) {
       {leftTip ? renderTipPanel(leftTip, true) : <main className="editor-main">
         <header className="editor-topbar">
           <div>{!navOpen && <button className="icon-button" onClick={() => setNavOpen(true)}><Menu size={18} /></button>}<div className="doc-breadcrumb"><FileText size={16} /><span>{documentItem.title || t("editor.untitled")}</span></div></div>
-          <div className="editor-controls"><SaveIndicator state={saveState} /><button className="secondary compact" onClick={() => void manualSave()}><Cloud size={15} />{t("common.save")}</button><button className={`icon-button ${documentItem.favorite ? "starred" : ""}`} onClick={async () => { const favorite = !documentItem.favorite; setDocumentItem({ ...documentItem, favorite }); await api.updateDocument(documentItem.id, { favorite }); }}><Star size={17} fill={documentItem.favorite ? "currentColor" : "none"} /></button><button className="icon-button" onClick={onSettings} title={t("editor.settings")}><Settings size={18} /></button></div>
+          <div className="editor-controls"><SaveIndicator state={saveState} /><button className="secondary compact" onClick={() => void manualSave()}><HardDrive size={15} />{t("common.save")}</button>{cloudEnabled && <button className="secondary compact cloud-upload-button" disabled={cloudBusy || documentItem.cloudState === "synced"} onClick={() => void uploadCloud()}>{cloudBusy ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{cloudBusy ? t("cloud.uploading") : documentItem.cloudState === "synced" ? t("cloud.synced") : documentItem.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}<button className={`icon-button ${documentItem.favorite ? "starred" : ""}`} onClick={async () => { const favorite = !documentItem.favorite; setDocumentItem({ ...documentItem, favorite }); await api.updateDocument(documentItem.id, { favorite }); }}><Star size={17} fill={documentItem.favorite ? "currentColor" : "none"} /></button><button className="icon-button" onClick={onSettings} title={t("editor.settings")}><Settings size={18} /></button></div>
         </header>
         <div className="editor-scroll" onScroll={() => setSelection(null)}>
           <article className="document-page">
@@ -872,6 +1231,8 @@ function AppContent() {
   const [checking, setChecking] = useState(Boolean(session.get()));
   const [screen, setScreen] = useState<Screen>({ type: "library", tab: "all" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [localModelsOpen, setLocalModelsOpen] = useState(false);
+  const [settingsRevision, setSettingsRevision] = useState(0);
   const [importPhase, setImportPhase] = useState<ImportPhase>("idle");
   const [importError, setImportError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -952,12 +1313,19 @@ function AppContent() {
   }, []);
   if (checking) return <div className="loading-state fullscreen"><LoaderCircle className="spin" /><span>{t("app.entering")}</span></div>;
   if (!user) return <AuthScreen onAuth={setUser} />;
+  const openLocalModels = () => {
+    void (async () => {
+      try { await saveBeforeImportRef.current?.(); }
+      catch { setImportError(t("save.failed")); return; }
+      setSettingsOpen(false); setLocalModelsOpen(true);
+    })();
+  };
   return <>
     <input ref={fileInputRef} data-global-document-input type="file" accept={DOCUMENT_ACCEPT} multiple hidden onChange={(event) => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ""; void importDocuments(files); }} />
-    {screen.type === "editor"
-    ? <EditorScreen id={screen.id} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onRegisterSave={registerSave} />
-    : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onUpload={() => fileInputRef.current?.click()} onLogout={() => { session.clear(); setSettingsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} />}
-    {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+    {localModelsOpen ? <LocalModelsScreen onBack={() => setLocalModelsOpen(false)} onConnected={() => setSettingsRevision((value) => value + 1)} /> : screen.type === "editor"
+    ? <EditorScreen id={screen.id} cloudEnabled={user.authMode === "supabase"} settingsRevision={settingsRevision} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onOpenLocalModels={openLocalModels} onRegisterSave={registerSave} />
+    : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onUpload={() => fileInputRef.current?.click()} onLogout={() => { session.clear(); setSettingsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} />}
+    {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onOpenLocalModels={openLocalModels} onSaved={() => setSettingsRevision((value) => value + 1)} />}
     {importPhase !== "idle" && <div className={`document-drop-overlay ${importPhase}`} data-import-phase={importPhase}><div>{importPhase === "uploading" || importPhase === "saving" ? <LoaderCircle className="spin" size={28} /> : <Upload size={28} />}<h2>{importPhase === "dragging" ? t("import.dropTitle") : importPhase === "saving" ? t("import.saving") : t("import.uploading")}</h2><p>{importPhase === "dragging" ? t("import.dropHint") : t("import.wait")}</p></div></div>}
     {importError && <div className="global-import-error" data-import-error><CircleHelp size={16} /><span>{importError}</span><button onClick={() => setImportError("")}><X size={14} /><span className="sr-only">{t("common.close")}</span></button></div>}
   </>;

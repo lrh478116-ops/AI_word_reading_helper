@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 process.env.AI_TIP_EMBEDDED = "1";
+process.env.AI_TIP_SUPABASE_ENABLED = "0";
 const integrationDataDir = await mkdtemp(path.join(tmpdir(), "ai-tip-docx-table-test-"));
 process.env.AI_TIP_DATA_DIR = integrationDataDir;
 
 const {
   DEFAULT_SYSTEM_PROMPTS,
   decodeUploadFilename,
+  decodeImportedText,
   defaultPromptForLanguage,
   extractPdfStructure,
   hasValidPdfContainer,
@@ -47,6 +49,15 @@ const fixtureBase64 = (await readFile(new URL("./fixtures/chinese-image.pdf.base
 const fixture = Buffer.from(fixtureBase64, "base64");
 if (!hasValidPdfContainer(fixture)) throw new Error("PDF 回归 fixture 容器签名无效");
 if (hasValidPdfContainer(Buffer.from("%PDF-1.7\nnot a real PDF", "ascii"))) throw new Error("仅伪造 PDF 文件头的文件被错误接纳");
+const pdfWithBomAndTrailer = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), fixture, Buffer.alloc(8192, 0x20)]);
+if (!hasValidPdfContainer(pdfWithBomAndTrailer)) throw new Error("带 UTF-8 BOM 和有限尾部数据的合法 PDF 容器被错误拒绝");
+
+const utf16le = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("中文 UTF-16LE", "utf16le")]);
+if (decodeImportedText(utf16le) !== "中文 UTF-16LE") throw new Error("UTF-16LE 文本文档解码失败");
+const utf16beText = "中文 UTF-16BE";
+const utf16beBody = Buffer.from(utf16beText, "utf16le");
+for (let index = 0; index < utf16beBody.length; index += 2) [utf16beBody[index], utf16beBody[index + 1]] = [utf16beBody[index + 1], utf16beBody[index]];
+if (decodeImportedText(Buffer.concat([Buffer.from([0xfe, 0xff]), utf16beBody])) !== utf16beText) throw new Error("UTF-16BE 文本文档解码失败");
 if (createHash("sha256").update(fixture).digest("hex") !== "dcd1efb66c75ce0e39c54b3c2e0a383d2fc81333d2df9d41a6242156a8978749") throw new Error("PDF 回归 fixture 被改写");
 
 const semanticFixtureBase64 = (await readFile(new URL("./fixtures/semantic-pdf.pdf.base64", import.meta.url), "utf8")).replace(/\s+/g, "");
