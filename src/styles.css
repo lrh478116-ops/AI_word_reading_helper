@@ -1,7 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap');
-
 :root {
-  font-family: "DM Sans", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
   color: #242722;
   background: #f5f6f1;
   font-synthesis: none;
@@ -47,7 +45,7 @@ button { border: 0; background: none; cursor: pointer; }
 .auth-copy { position: relative; z-index: 1; max-width: 610px; margin: 14vh auto 0; }
 .eyebrow { display: flex; align-items: center; gap: 10px; color: #cbd5c7; font-size: 12px; font-weight: 600; letter-spacing: .12em; }
 .eyebrow span { width: 26px; height: 1px; background: #a9b6a4; }
-.auth-copy h1 { margin: 24px 0 22px; font-family: "Noto Serif SC", serif; font-weight: 600; font-size: clamp(40px, 4.2vw, 64px); line-height: 1.22; letter-spacing: -.045em; }
+.auth-copy h1 { margin: 24px 0 22px; font-family: "Songti SC", SimSun, Georgia, serif; font-weight: 600; font-size: clamp(40px, 4.2vw, 64px); line-height: 1.22; letter-spacing: -.045em; }
 .auth-copy > p { max-width: 550px; color: #c9d0c4; font-size: 16px; line-height: 1.85; }
 .feature-preview { margin-top: 48px; width: min(520px, 90%); height: 210px; padding: 22px; border: 1px solid rgba(255,255,255,.12); border-radius: 18px; background: rgba(255,255,255,.065); backdrop-filter: blur(14px); transform: rotate(-1deg); }
 .preview-page { position: relative; height: 100%; padding: 27px 34px; border-radius: 10px; background: #f5f3e9; box-shadow: 0 18px 40px rgba(20,26,18,.18); }
@@ -60,7 +58,7 @@ button { border: 0; background: none; cursor: pointer; }
 .auth-panel { display: flex; align-items: center; justify-content: center; padding: 48px; overflow: auto; background: #fbfbf9; }
 .auth-card { width: min(390px, 100%); display: flex; flex-direction: column; gap: 21px; }
 .mobile-brand { display: none; }
-.auth-card h2 { margin: 0; font-family: "Noto Serif SC", serif; font-size: 30px; letter-spacing: -.025em; }
+.auth-card h2 { margin: 0; font-family: "Songti SC", SimSun, Georgia, serif; font-size: 30px; letter-spacing: -.025em; }
 .auth-card > div > .muted { margin: 10px 0 0; font-size: 13px; }
 .auth-card label { display: grid; gap: 8px; color: #4f544d; font-size: 12px; font-weight: 600; }
 .auth-card input { width: 100%; height: 46px; padding: 0 14px; color: var(--ink); border: 1px solid #dde0d8; border-radius: 10px; background: #fff; font-size: 13px; transition: border .15s; }
@@ -100,14 +98,14 @@ button { border: 0; background: none; cursor: pointer; }
 .contact-copy-button svg { flex: 0 0 auto; margin-top: 1px; }.contact-copy-button span { min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
 .contact-copy-status { min-height: 15px; display: block; padding: 2px 11px 3px; color: transparent; font-size: 8px; line-height: 1.3; }.contact-copy-status.copied { color: #587052; }.contact-copy-status.failed { color: #a2554d; }
 .user-row { display: grid; grid-template-columns: 35px 1fr; align-items: center; gap: 9px; margin-top: 10px; padding: 14px 6px 0; border-top: 1px solid var(--line); }
-.avatar { width: 34px; height: 34px; display: grid; place-items: center; color: #fff; border-radius: 50%; background: #8d765e; font-family: "Noto Serif SC", serif; font-size: 13px; }
+.avatar { width: 34px; height: 34px; display: grid; place-items: center; color: #fff; border-radius: 50%; background: #8d765e; font-family: "Songti SC", SimSun, Georgia, serif; font-size: 13px; }
 .user-row div:nth-child(2) { min-width: 0; display: grid; gap: 2px; }.user-row strong { font-size: 11px; }.user-row span { overflow: hidden; color: #9a9e97; font-size: 9px; text-overflow: ellipsis; }
 .logout-button { grid-column: 1 / -1; width: 100%; height: 30px; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 3px; color: #8d554e; border: 1px solid #ecdcd8; border-radius: 7px; background: #fff8f6; font-size: 10px; font-weight: 600; }
 .logout-button:hover { color: #793e37; border-color: #dec6c1; background: #f9ece9; }
 .logout-button span { color: inherit; font-size: inherit; }
 .library-main { min-width: 0; padding: 52px clamp(35px, 5vw, 76px) 25px; background: #f6f7f3; }
 .library-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 35px; max-width: 1150px; margin: 0 auto 38px; }
-.library-header h1 { margin: 0; font-family: "Noto Serif SC", serif; font-size: 35px; letter-spacing: -.04em; }
+.library-header h1 { margin: 0; font-family: "Songti SC", SimSun, Georgia, serif; font-size: 35px; letter-spacing: -.04em; }
 .library-header p:last-child { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
 .library-header .cloud-usage { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: #64745d; font-size: 11px; }
 .header-actions { display: flex; gap: 9px; }
@@ -126,6 +124,7 @@ button { border: 0; background: none; cursor: pointer; }
 .cloud-state { position: absolute; left: 20px; top: 68px; padding: 3px 7px; border-radius: 999px; color: #687267; background: #f0f2ed; font-size: 9px; }.cloud-state.synced { color: #456641; background: #e8f1e5; }.cloud-state.modified { color: #8a6537; background: #f7eddb; }
 .card-actions { position: absolute; inset: auto 0 0; display: flex; justify-content: flex-end; gap: 6px; padding: 8px 12px; background: rgba(255,255,255,.97); border-top: 1px solid #eff0ec; opacity: 0; transform: translateY(100%); transition: .18s; }.document-card:hover .card-actions { opacity: 1; transform: translateY(0); }.card-actions button { display: flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 6px; font-size: 10px; }.card-actions button:hover { background: #f3f4f0; }
 .card-actions .cloud-action, .cloud-upload-button { color: #50694b; }
+.cloud-delete-button { color: #a2554d; border-color: #e5cbc7; }
 .danger-text { color: #a2554d !important; }
 .library-foot { max-width: 1150px; margin: 30px auto 0; display: flex; justify-content: space-between; color: #a0a49d; font-size: 10px; }.library-foot span { display: flex; align-items: center; gap: 6px; }
 .loading-state, .empty-state, .fatal-state { display: flex; flex-direction: column; align-items: center; justify-content: center; color: #91968e; text-align: center; }
@@ -202,6 +201,7 @@ button { border: 0; background: none; cursor: pointer; }
 .model-refresh-row { display: flex; align-items: center; gap: 10px; margin-top: -8px; }.model-refresh-row small { color: #8c9389; font-size: 9px; line-height: 1.45; }
 .settings-body > .language-select { grid-template-columns: auto 1fr minmax(180px, 45%); padding: 10px 12px; border: 1px solid #dfe3da; border-radius: 10px; background: #f5f7f2; }
 .settings-note { display: flex; align-items: flex-start; gap: 10px; padding: 12px; color: #687064; border: 1px solid #dfe5da; border-radius: 9px; background: #f1f5ee; font-size: 10px; line-height: 1.55; }.settings-note svg { flex: 0 0 auto; margin-top: 1px; color: #607157; }.settings-note span { display: grid; gap: 2px; }.settings-note strong { color: #455140; font-size: 10px; }.settings-message { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border-radius: 8px; font-size: 10px; }.settings-message.ok { color: #4e6a47; background: #eaf3e6; }.settings-message.error { color: #955148; background: #f8eae8; }
+.account-privacy { display: grid; gap: 11px; padding: 14px; border: 1px solid #ead6d2; border-radius: 11px; background: #fff9f7; }.account-privacy > div:first-child { display: flex; align-items: flex-start; gap: 9px; color: #7b514b; }.account-privacy > div:first-child svg { flex: 0 0 auto; margin-top: 1px; }.account-privacy > div:first-child span { display: grid; gap: 3px; }.account-privacy > div:first-child strong { font-size: 11px; }.account-privacy > div:first-child small { color: #9a7771; font-size: 9px; font-weight: 400; }.account-links { display: flex; flex-wrap: wrap; gap: 7px 12px; }.account-links a { color: #5f7158; font-size: 9px; font-weight: 700; text-decoration: none; }.account-links a:hover { text-decoration: underline; }.account-privacy p { margin: 0; color: #826963; font-size: 9px; line-height: 1.65; }.account-privacy label { display: grid; gap: 6px; color: #6f5752; font-size: 9px; font-weight: 700; }.account-privacy .danger-button { width: max-content; min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; color: #fff; border: 0; border-radius: 8px; background: #a6554e; font-size: 9px; font-weight: 700; }.account-privacy .danger-button:hover:not(:disabled) { background: #8f443e; }.account-privacy .danger-button:disabled { opacity: .42; cursor: not-allowed; }
 .skill-settings { display: grid; gap: 12px; padding: 14px; border: 1px solid #e0e3dc; border-radius: 11px; background: #fff; }.skill-setting-row { display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; }.skill-setting-icon { width: 34px; height: 34px; display: grid; place-items: center; color: #5d6e56; border-radius: 9px; background: #edf2ea; }.skill-setting-row > div { display: grid; gap: 2px; }.skill-setting-row strong { color: #434a40; font-size: 11px; }.skill-setting-row small { color: #91968e; font-size: 9px; }.toggle { position: relative; width: 34px; height: 19px; padding: 0; border-radius: 10px; background: #d5d9d2; transition: .16s; }.toggle i { position: absolute; left: 3px; top: 3px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.13); transition: .16s; }.toggle.on { background: #61725a; }.toggle.on i { transform: translateX(15px); }.skill-settings > label { display: grid; gap: 7px; color: #4e544b; font-size: 10px; font-weight: 600; }.skill-settings .clear-key { display: flex; align-items: center; gap: 7px; margin: -4px 0 0; color: #888e85; font-weight: 400; }
 .reliability-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 10px; border-radius: 8px; background: #f5f7f2; }.reliability-list span { display: flex; align-items: center; gap: 5px; color: #727970; font-size: 8px; }.reliability-list svg { color: #607158; }
 .settings-modal > footer { display: flex; justify-content: flex-end; gap: 9px; padding: 15px 26px; border-top: 1px solid var(--line); background: #f7f8f4; }.settings-modal > footer button { height: 38px; font-size: 11px; }

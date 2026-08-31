@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AI Tip 账户与数据删除说明">
+  <title>删除账户 · AI Tip</title>
+  <link rel="stylesheet" href="../assets/site.css">
+  <script src="../assets/site.js" defer></script>
+</head>
+<body>
+  <header class="site-header"><nav class="wrap nav"><a class="brand" href="../">AI Tip</a><a href="../">首页 / Home</a><a href="../privacy/">隐私政策 / Privacy</a><button class="language" type="button" data-language-toggle>中文 / English</button></nav></header>
+  <main class="wrap policy">
+    <article data-lang="zh">
+      <div class="eyebrow">Account deletion</div><h1>删除账户与数据</h1>
+      <p>云账户可直接在应用内删除，不要求发送邮件或联系客服。请打开 AI Tip，依次进入<strong>设置 → 账户与隐私 → 删除账户</strong>，输入当前账户邮箱并确认。删除是不可逆操作。</p>
+      <h2>删除范围</h2>
+      <ul><li>Supabase Auth 中的云账户身份；</li><li>用户主动上传的云端文档压缩包；</li><li>云端文档快照、Tip 锚点、Tip 树与聊天消息；</li><li>当前设备中属于该账户的文档、Tip、设置、源文件缓存和记住登录凭据。</li></ul>
+      <p>模型 API Key 与 Tavily Key 本来就只保存在当前设备；清理当前设备账户数据时也会移除。其他设备上的本地、未上传内容无法由云端远程删除，需要在对应设备上清理。</p>
+      <h2>仅本地使用</h2>
+      <p>“仅本地使用”不会创建 Supabase 云账户。设置中的相同区域会显示“清除本地账户数据”，它只清除当前设备数据，不调用云端账户删除接口。固定本地入口以后仍可重新进入，但已清除的本地文档不会恢复。</p>
+      <h2>无法访问应用时</h2>
+      <p>如果因为设备丢失或登录故障无法使用应用内入口，请联系 <a href="mailto:2280810215@qq.com" data-copy-email>2280810215@qq.com</a>。为防止删除他人账户，我们会要求验证账户所有权；普通可登录账户仍应优先使用应用内删除功能。</p><p class="copy-status" data-copy-status aria-live="polite"></p>
+      <h2>处理结果</h2>
+      <p>应用仅在远端 Storage 和 Auth 删除完成后显示云账户删除成功。如果云服务暂时失败，应用会明确报错并保留本机数据与会话，方便用户重试，不会把退出登录冒充为删除账户。</p>
+    </article>
+    <article data-lang="en">
+      <div class="eyebrow">Account deletion</div><h1>Delete your account and data</h1>
+      <p>Open AI Tip and go to <strong>Settings → Account &amp; privacy → Delete account</strong>. Enter your current account email and confirm. You do not need to email support when you can sign in.</p>
+      <h2>What is deleted</h2><p>Your Supabase Auth identity, uploaded document archives, cloud document and Tip records, and this device's data for the account are deleted. Credentials stored only on the device are also cleared on that device.</p>
+      <h2>Local-only mode</h2><p>Local-only mode does not create a cloud account. Its action clears data from the current device and does not call the cloud account deletion service.</p>
+      <h2>If you cannot access the app</h2><p>Contact <a href="mailto:2280810215@qq.com" data-copy-email>2280810215@qq.com</a>. We will require account ownership verification before processing a request.</p><p class="copy-status" data-copy-status aria-live="polite"></p>
+    </article>
+  </main>
+  <footer class="site-footer"><div class="wrap footer-row"><a href="../">首页 / Home</a><a href="../privacy/">隐私政策 / Privacy</a></div></footer>
+</body>
+</html>

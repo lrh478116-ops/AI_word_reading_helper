@@ -7,6 +7,7 @@ declare global {
       loadRememberedLogin: () => Promise<{ available: boolean; credentials: { email: string; password: string } | null }>;
       saveRememberedLogin: (email: string, password: string) => Promise<{ saved: boolean; email: string }>;
       clearRememberedLogin: () => Promise<{ cleared: boolean }>;
+      captureStoreAsset: (name: string) => Promise<{ saved: boolean; name: string; width: number; height: number }>;
       getOllamaStatus: () => Promise<{ installed: boolean; executable: string; platform: string; supported: boolean; mas: boolean; installer: { version: string; assetName: string; size: number; sha256: string; startUrl: string } | null }>;
       chooseOllamaInstallerDestination: () => Promise<{ canceled: boolean; path?: string; selectionToken?: string }>;
       downloadOllamaInstaller: (requestId: string, selectionToken: string) => Promise<{ ok: boolean; opened: boolean; finalPath: string; version: string; size: number; sha256: string }>;

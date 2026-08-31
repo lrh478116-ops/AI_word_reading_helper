@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("aiTipDesktop", Object.freeze({
   loadRememberedLogin: () => ipcRenderer.invoke("ai-tip:load-remembered-login"),
   saveRememberedLogin: (email, password) => ipcRenderer.invoke("ai-tip:save-remembered-login", { email, password }),
   clearRememberedLogin: () => ipcRenderer.invoke("ai-tip:clear-remembered-login"),
+  captureStoreAsset: (name) => ipcRenderer.invoke("ai-tip:capture-store-asset", { name }),
   getOllamaStatus: () => ipcRenderer.invoke("ai-tip:get-ollama-status"),
   chooseOllamaInstallerDestination: async () => {
     const result = await ipcRenderer.invoke("ai-tip:choose-ollama-installer-destination");

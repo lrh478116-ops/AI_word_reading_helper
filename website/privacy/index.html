@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="AI Tip 隐私政策">
+  <title>隐私政策 · AI Tip</title>
+  <link rel="stylesheet" href="../assets/site.css">
+  <script src="../assets/site.js" defer></script>
+</head>
+<body>
+  <header class="site-header"><nav class="wrap nav"><a class="brand" href="../">AI Tip</a><a href="../">首页 / Home</a><a href="../account-deletion/">账户删除 / Account deletion</a><button class="language" type="button" data-language-toggle>中文 / English</button></nav></header>
+  <main class="wrap policy">
+    <article data-lang="zh">
+      <div class="eyebrow">Privacy Policy</div>
+      <h1>AI Tip 隐私政策</h1>
+      <p class="meta">生效日期：2026 年 8 月 30 日　最后更新：2026 年 8 月 30 日</p>
+      <p>本政策说明 AI Tip Windows 与 macOS 桌面应用如何处理信息。AI Tip 默认以本地模式工作：不点击“上传到云端”，文档、Tip 对话和设置就只保存在当前设备。公开网站不使用广告、统计脚本或跟踪像素。</p>
+
+      <h2>1. 我们处理的信息</h2>
+      <table><thead><tr><th>类别</th><th>内容与目的</th><th>默认位置</th></tr></thead><tbody>
+        <tr><td>账户</td><td>选择创建云账户时处理姓名、邮箱、认证状态；密码由 Supabase Auth 处理，应用不保存可读取的明文密码。</td><td>Supabase 与设备会话</td></tr>
+        <tr><td>文档</td><td>用户主动导入的 PDF、DOCX、TXT、Markdown 等文件，以及解析结构、标题和编辑内容，用于阅读和编辑。</td><td>默认本地</td></tr>
+        <tr><td>Tip 与聊天</td><td>选区、锚点、消息、Tip 树、记忆开关与回答，用于上下文对话。</td><td>默认本地</td></tr>
+        <tr><td>AI 配置</td><td>用户选择的服务商、模型、Prompt、API 地址和 API Key，用于调用用户指定的大模型。</td><td>当前设备</td></tr>
+        <tr><td>联网搜索</td><td>仅在用户打开联网搜索开关时，将查询发送给 Tavily 或应用列出的参考站点。</td><td>相关服务商</td></tr>
+        <tr><td>诊断</td><td>应用运行错误和本地日志，用于排查故障；不会由官网自动收集。</td><td>当前设备</td></tr>
+      </tbody></table>
+
+      <h2>2. 本地保存与云端上传</h2>
+      <p>导入文档不会自动上传。只有用户登录云账户并点击“上传到云端”后，应用才会把文档快照、Tip 数据以及原文件的 gzip 压缩包上传到 Supabase。每个用户的云端空间限额为 5 MB；达到限额时上传会被拒绝，本地文件仍保留。关闭应用、切换页面或普通本地删除不会被描述为云端删除。</p>
+
+      <h2>3. 大模型、Tavily 与其他第三方</h2>
+      <p>AI Tip 不向其他用户提供开发者的私有大模型 API Key。用户在设置中自行录入大模型 API 后，问题、相关原文、Prompt 和必要上下文会发送给该用户选择的 API 提供商。使用本地模型时，这些推理数据在本机处理。</p>
+      <p>联网搜索默认关闭。关闭时，不调用 Tavily，也不访问百科或其他参考网站；打开后，搜索词可能发送至 Tavily 或相关参考站点。第三方如何使用信息受其自身条款和隐私政策约束。搜索失败时应用仍可基于已导入文档回答，但会明确说明证据边界。</p>
+
+      <h2>4. 凭据安全</h2>
+      <p>选择“记住登录”时，登录凭据通过操作系统提供的安全存储或加密能力保存在当前设备。模型 API Key 与 Tavily Key 不上传到 AI Tip 的 Supabase 文档库。请勿在共享设备上启用记住登录，并妥善保护设备账户。</p>
+
+      <h2>5. 保留、导出和删除</h2>
+      <p>本地数据会保留到用户在应用中删除文档、清除本地账户数据或卸载并移除应用数据。云端数据会保留到用户移出云端或删除账户。删除云账户时，应用先删除该用户的云端 Storage 对象，再删除 Auth 用户；数据库中的文档与 Tip 通过所有者关系级联删除。详情见<a href="../account-deletion/">删除账户说明</a>。</p>
+
+      <h2>6. 权限与选择</h2>
+      <p>用户可选择仅本地使用、是否创建云账户、是否上传具体文档、是否启用联网搜索、使用本地模型或第三方模型，以及是否记住登录。导入文件与选择模型目录时，应用仅访问用户明确选择的路径。</p>
+
+      <h2>7. 儿童、跨境与变更</h2>
+      <p>AI Tip 面向能够理解文档分析和外部 API 配置的用户，不以儿童为目标。用户选择境外 AI 或搜索服务时，相关数据可能在其服务区域处理。政策发生实质变化时，将在本页更新日期，并在适用情况下通过应用提示。</p>
+
+      <h2>8. 联系方式</h2>
+      <p>隐私、数据或账户问题请联系：<a href="mailto:2280810215@qq.com" data-copy-email>2280810215@qq.com</a>。</p><p class="copy-status" data-copy-status aria-live="polite"></p>
+      <p class="notice">本政策用于准确描述当前产品实现，不构成针对特定司法辖区的法律意见。正式发布前仍需由运营主体确认名称、所在地、未成年人适用性和备案信息。</p>
+    </article>
+
+    <article data-lang="en">
+      <div class="eyebrow">Privacy Policy</div><h1>AI Tip Privacy Policy</h1><p class="meta">Effective and last updated: August 30, 2026</p>
+      <p>AI Tip is a Windows and macOS desktop document reader. It is local-first: documents, Tips and settings remain on the current device unless you explicitly select Upload to cloud. This website does not use ads, analytics or tracking pixels.</p>
+      <h2>Information and purposes</h2><p>If you create a cloud account, Supabase Auth processes your name, email and authentication state. Imported documents, parsed structures, edits, Tip anchors, conversations and memory settings are processed to provide reading and AI features. AI provider settings, prompts and API credentials are stored on your device.</p>
+      <h2>Cloud storage</h2><p>Cloud upload is opt-in per document. A compressed source archive, document snapshot and Tip data are stored in Supabase, with a 5 MB per-user quota. Model and Tavily API keys are excluded from that cloud document store.</p>
+      <h2>AI and web search</h2><p>When you choose an external AI provider, relevant prompts and document context are sent to that provider. Web search is off by default. When enabled, queries may be sent to Tavily or displayed reference sites. Local models process inference on your device.</p>
+      <h2>Security, retention and deletion</h2><p>Remembered login data uses operating-system secure storage or encryption. Local data remains until removed on the device. Cloud data remains until removed from cloud or the account is deleted. See the <a href="../account-deletion/">account deletion instructions</a>.</p>
+      <h2>Contact</h2><p><a href="mailto:2280810215@qq.com" data-copy-email>2280810215@qq.com</a></p><p class="copy-status" data-copy-status aria-live="polite"></p>
+    </article>
+  </main>
+  <footer class="site-footer"><div class="wrap footer-row"><a href="../">首页 / Home</a><a href="../account-deletion/">账户删除 / Account deletion</a></div></footer>
+</body>
+</html>

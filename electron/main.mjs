@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, session, shell } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { createServer } from "node:http";
@@ -31,7 +31,11 @@ const ollamaInstallerDownloads = new Map();
 const modelSecurityScopeStops = [];
 let modelDirectoryPreparation = null;
 let rememberedLoginStore = null;
+let smokeContactCopied = false;
 const smokeResultPath = process.env.AI_TIP_SMOKE_RESULT_PATH ? path.resolve(process.env.AI_TIP_SMOKE_RESULT_PATH) : "";
+const storeAssetDir = process.env.AI_TIP_STORE_ASSET_DIR ? path.resolve(process.env.AI_TIP_STORE_ASSET_DIR) : "";
+const storeAssetNames = new Set(["01-local-models.png", "02-word-table.png", "03-pdf-tip.png", "04-tip-tree.png"]);
+if (storeAssetDir) app.commandLine.appendSwitch("force-device-scale-factor", "1");
 
 function bundledLlamaServerPath() {
   const platformFolder = process.platform === "win32" ? "win-x64" : process.arch === "arm64" ? "mac-arm64" : "mac-x64";
@@ -130,7 +134,9 @@ function installDesktopIpc() {
     const value = String(payload?.value || "").slice(0, 10_000);
     if (!value) throw new Error("复制内容为空");
     clipboard.writeText(value);
-    return { copied: clipboard.readText() === value };
+    const copied = clipboard.readText() === value;
+    if (process.argv.includes("--smoke-test") && value === "2280810215@qq.com" && copied) smokeContactCopied = true;
+    return { copied };
   });
   ipcMain.removeHandler("ai-tip:choose-model-directory");
   ipcMain.removeHandler("ai-tip:prepare-model-directory");
@@ -142,6 +148,7 @@ function installDesktopIpc() {
   ipcMain.removeHandler("ai-tip:choose-ollama-installer-destination");
   ipcMain.removeHandler("ai-tip:download-ollama-installer");
   ipcMain.removeHandler("ai-tip:cancel-ollama-installer");
+  ipcMain.removeHandler("ai-tip:capture-store-asset");
   rememberedLoginStore ||= createRememberedLoginStore({
     filePath: path.join(app.getPath("userData"), "remembered-login.json"),
     codec: {
@@ -153,6 +160,18 @@ function installDesktopIpc() {
   ipcMain.handle("ai-tip:load-remembered-login", async () => ({ available: rememberedLoginStore.available(), credentials: await rememberedLoginStore.load() }));
   ipcMain.handle("ai-tip:save-remembered-login", async (_event, payload = {}) => rememberedLoginStore.save({ email: payload.email, password: payload.password }));
   ipcMain.handle("ai-tip:clear-remembered-login", async () => rememberedLoginStore.clear());
+  ipcMain.handle("ai-tip:capture-store-asset", async (_event, payload = {}) => {
+    if (!process.argv.includes("--smoke-test") || !storeAssetDir || !mainWindow) throw new Error("Store asset capture is available only in the desktop smoke run");
+    const name = String(payload.name || "");
+    if (!storeAssetNames.has(name)) throw new Error("Unsupported store asset name");
+    mkdirSync(storeAssetDir, { recursive: true });
+    const image = await mainWindow.webContents.capturePage();
+    const size = image.getSize();
+    if (size.width !== 1440 || size.height !== 900) throw new Error(`Store asset viewport must be 1440x900, got ${size.width}x${size.height}`);
+    const destination = path.join(storeAssetDir, name);
+    writeFileSync(destination, image.toPNG());
+    return { saved: true, name, width: size.width, height: size.height };
+  });
   ipcMain.handle("ai-tip:get-ollama-status", async () => {
     if (process.argv.includes("--smoke-test")) return { installed: false, executable: "", platform: process.platform, supported: true, mas: false, installer: { version: "v-smoke", assetName: process.platform === "darwin" ? "Ollama.dmg" : "OllamaSetup.exe", size: 123_456_789, sha256: "a".repeat(64), startUrl: process.platform === "darwin" ? "https://ollama.com/download/Ollama.dmg" : "https://ollama.com/download/OllamaSetup.exe" } };
     const installed = Boolean(findOllamaExecutable());
@@ -272,7 +291,8 @@ async function createWindow() {
   const serverURL = await bootServer();
   mainWindow = new BrowserWindow({
     width: 1440,
-    height: smokeTest ? 800 : 920,
+    height: storeAssetDir ? 900 : smokeTest ? 800 : 920,
+    useContentSize: Boolean(storeAssetDir),
     minWidth: 980,
     minHeight: 680,
     show: false,
@@ -288,7 +308,7 @@ async function createWindow() {
 
   mainWindow.once("ready-to-show", () => { if (!smokeTest) mainWindow?.show(); });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) void shell.openExternal(url);
+    if (/^(https?:|mailto:)/i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
@@ -324,6 +344,12 @@ async function createWindow() {
       const docxFixtureBase64 = ${JSON.stringify(docxFixtureBase64)};
       const smokeModelURL = ${JSON.stringify(smokeModelURL)};
       const capturePdfCanvas = ${JSON.stringify(Boolean(process.env.AI_TIP_PDF_SCREENSHOT_PATH))};
+      const captureStoreAssets = ${JSON.stringify(Boolean(storeAssetDir))};
+      const captureStoreAsset = async name => {
+        if (!captureStoreAssets || !window.aiTipDesktop.captureStoreAsset) return null;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 300))));
+        return window.aiTipDesktop.captureStoreAsset(name);
+      };
       const waitFor = async (selector, timeout = 5000) => {
         const started = Date.now();
         while (Date.now() - started < timeout) {
@@ -415,6 +441,7 @@ async function createWindow() {
       await waitUntil(() => document.querySelectorAll('[data-local-model-id]').length === 11, '11 项本地模型目录');
       if (document.body.innerText.includes('我的评价') || !document.body.innerText.includes('ModelScope 官方仓库（国内）') || !document.body.innerText.includes('导入本地 GGUF') || !document.querySelector('[data-local-model-id="llama-3.2-1b"]')?.textContent?.includes('808 MB') || !document.querySelector('[data-local-model-id="gemma-4-e2b"]')?.textContent?.includes('7.2 GB')) throw new Error('本地模型页面的字段、官方双源或核对大小错误');
       if (!document.body.innerText.includes('内置 llama.cpp 可用，无需 Ollama')) throw new Error('没有明确显示内置运行时不依赖 Ollama');
+      await captureStoreAsset('01-local-models.png');
       document.querySelector('[data-local-model-id="minicpm5-1b"] .source-download').click();
       const modelDownloadDialog = await waitFor('[data-local-download-dialog]');
       if (!modelDownloadDialog.querySelector('[data-model-directory]') || !modelDownloadDialog.querySelector('[data-choose-model-directory]') || !modelDownloadDialog.textContent.includes('下载速度') || !modelDownloadDialog.textContent.includes('预计剩余')) throw new Error('本地模型下载没有使用包含目录、速度和 ETA 的桌面下载对话框');
@@ -570,6 +597,7 @@ async function createWindow() {
       const wordTable = await waitFor('table[data-word-table]');
       const editableCells = wordTable.querySelectorAll('th[contenteditable], td[contenteditable]');
       if (editableCells.length !== 4 || editableCells[0].textContent !== 'Top left' || editableCells[3].textContent !== 'Bottom right') throw new Error('Word 表格没有按两行两列可编辑结构显示');
+      await captureStoreAsset('02-word-table.png');
       const addControls = [...document.querySelectorAll('.add-block-row button')].map(button => button.textContent.trim());
       if (addControls.length !== 4 || !addControls.some(text => text.includes('添加段落')) || !addControls.some(text => text.includes('标题')) || !addControls.some(text => text.includes('代码')) || !addControls.some(text => text.includes('引用'))) throw new Error('直接编辑修复误删了四个结构化添加入口');
       editableCells[3].innerText = 'Bottomdesktop saved';
@@ -620,6 +648,7 @@ async function createWindow() {
         (await waitFor('.selection-toolbar button')).click();
         const pdfTipPanel = await waitFor('[data-tip-panel]');
         const pdfTipId = pdfTipPanel.getAttribute('data-tip-panel');
+        await captureStoreAsset('03-pdf-tip.png');
         const pdfDocumentId = document.querySelector('[data-pdf-document]').getAttribute('data-pdf-document');
         const persistedPdf = await fetch('/api/documents/' + pdfDocumentId, { headers: { Authorization: 'Bearer ' + token } }).then(response => response.json());
         const persistedPdfTip = persistedPdf.tips.find(tip => tip.id === pdfTipId);
@@ -799,6 +828,7 @@ async function createWindow() {
       if (document.querySelector('.tip-panel-context')?.getAttribute('data-tip-panel') !== rootId || !document.querySelector('.tip-tree-button')) throw new Error('子 Tip 没有形成父聊天替换文档的双栏布局或树入口');
       document.querySelector('.tip-tree-button').click();
       await waitFor('.tip-tree-dialog');
+      await captureStoreAsset('04-tip-tree.png');
       const childVertex = document.querySelector('[data-tip-tree-id="' + childId + '"]');
       if (!childVertex) throw new Error('Tip 树没有显示子对话节点');
       const childName = '可修改的子对话名称';
@@ -869,7 +899,7 @@ async function createWindow() {
     })()`),
       new Promise((_, reject) => setTimeout(() => reject(new Error("Desktop UI smoke exceeded 10 minutes")), 600000)),
     ]);
-      if (clipboard.readText() !== '2280810215@qq.com') throw new Error('联系按钮没有把邮箱写入系统剪贴板');
+      if (!smokeContactCopied) throw new Error('联系按钮没有通过桌面 IPC 把邮箱写入系统剪贴板');
     }
     catch (error) {
       const diagnostic = await mainWindow.webContents.executeJavaScript("({ step: window.__desktopSmokeStep || 'unknown', text: document.body.innerText.slice(-700), importError: document.querySelector('[data-import-error]')?.textContent || '', editor: document.querySelector('[data-editor-document]')?.getAttribute('data-editor-document') || '' })").catch(() => ({}));

@@ -23,6 +23,7 @@ type ImportPhase = "idle" | "dragging" | "saving" | "uploading";
 
 const DOCUMENT_ACCEPT = ".txt,.md,.markdown,.docx,.pdf";
 const CONTACT_EMAIL = "2280810215@qq.com";
+const PUBLIC_SITE_URL = String(import.meta.env.VITE_AI_TIP_PUBLIC_SITE_URL || "https://lrh478116-ops.github.io/AI_word_reading_helper").replace(/\/$/, "");
 const SUPPORTED_DOCUMENT_EXTENSIONS = new Set(DOCUMENT_ACCEPT.split(","));
 
 function documentExtension(file: Pick<File, "name">) {
@@ -413,7 +414,7 @@ function LocalModelsScreen({ onBack, onConnected }: { onBack: () => void; onConn
   </main>;
 }
 
-function SettingsModal({ onClose, onOpenLocalModels, onSaved }: { onClose: () => void; onOpenLocalModels: () => void; onSaved: () => void }) {
+function SettingsModal({ user, onClose, onOpenLocalModels, onSaved, onAccountDeleted }: { user: User; onClose: () => void; onOpenLocalModels: () => void; onSaved: () => void; onAccountDeleted: () => void }) {
   const { language, t } = useI18n();
   const languageRef = useRef(language);
   const [saved, setSaved] = useState<AiSettings | null>(null);
@@ -421,6 +422,8 @@ function SettingsModal({ onClose, onOpenLocalModels, onSaved }: { onClose: () =>
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<"save" | "test" | "">("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [accountConfirmation, setAccountConfirmation] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelsBusy, setModelsBusy] = useState(false);
   const providerOptions = Object.values(PROVIDER_REGISTRY);
@@ -465,6 +468,19 @@ function SettingsModal({ onClose, onOpenLocalModels, onSaved }: { onClose: () =>
     } catch (error) { setMessage({ kind: "error", text: error instanceof Error ? error.message : t("settings.failed") }); }
     finally { setBusy(""); }
   };
+  const deleteAccount = async () => {
+    if (accountConfirmation.trim().toLowerCase() !== user.email.toLowerCase()) return;
+    if (!window.confirm(user.authMode === "supabase" ? t("account.deleteFinalConfirm") : t("account.clearLocalFinalConfirm"))) return;
+    setDeletingAccount(true); setMessage(null);
+    try {
+      await api.deleteAccount(accountConfirmation);
+      session.clear();
+      await window.aiTipDesktop?.clearRememberedLogin().catch(() => undefined);
+      onAccountDeleted();
+    } catch (error) {
+      setMessage({ kind: "error", text: error instanceof Error ? error.message : t("account.deleteFailed") });
+    } finally { setDeletingAccount(false); }
+  };
   const refreshModels = async () => {
     setModelsBusy(true); setMessage(null);
     try {
@@ -498,6 +514,13 @@ function SettingsModal({ onClose, onOpenLocalModels, onSaved }: { onClose: () =>
           {draft.reliabilityEnabled && <div className="reliability-list">{Array.from({ length: 12 }, (_, index) => t(`settings.check.${index + 1}`)).map((item) => <span key={item}><Check size={10} />{item}</span>)}</div>}
         </div>
         <div className="settings-note"><Brain size={16} /><span><strong>{t("settings.memoryTitle")}</strong>{t("settings.memoryText")}</span></div>
+        <section className="account-privacy" data-account-privacy>
+          <div><ShieldCheck size={17} /><span><strong>{t("account.title")}</strong><small>{t("account.subtitle")}</small></span></div>
+          <div className="account-links"><a data-privacy-link href={`${PUBLIC_SITE_URL}/privacy/`} target="_blank" rel="noreferrer">{t("account.privacy")}</a><a href={`${PUBLIC_SITE_URL}/account-deletion/`} target="_blank" rel="noreferrer">{t("account.deletionHelp")}</a><a href={`mailto:${CONTACT_EMAIL}`}>{t("account.contact")}</a></div>
+          <p>{user.authMode === "supabase" ? t("account.cloudDeleteHint") : t("account.localDeleteHint")}</p>
+          <label>{t("account.confirmLabel")}<input data-account-confirmation value={accountConfirmation} onChange={(event) => setAccountConfirmation(event.target.value)} placeholder={user.email} /></label>
+          <button type="button" className="danger-button" data-delete-account onClick={() => void deleteAccount()} disabled={deletingAccount || accountConfirmation.trim().toLowerCase() !== user.email.toLowerCase()}>{deletingAccount ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}{user.authMode === "supabase" ? t("account.delete") : t("account.clearLocal")}</button>
+        </section>
         {message && <div className={`settings-message ${message.kind}`}>{message.kind === "ok" ? <CheckCircle2 size={16} /> : <CircleHelp size={16} />}{message.text}</div>}
       </div>}
       <footer><button className="secondary" onClick={() => void run("test")} disabled={loading || Boolean(busy)}>{busy === "test" ? <LoaderCircle className="spin" size={16} /> : <Zap size={16} />}{t("settings.test")}</button><button className="primary" onClick={() => void run("save")} disabled={loading || Boolean(busy)}>{busy === "save" ? <LoaderCircle className="spin" size={16} /> : <Check size={16} />}{t("settings.save")}</button></footer>
@@ -575,6 +598,7 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
   const [error, setError] = useState("");
   const [cloudUsage, setCloudUsage] = useState<CloudUsage | null>(null);
   const [cloudBusyId, setCloudBusyId] = useState("");
+  const [cloudDeletingId, setCloudDeletingId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -606,10 +630,10 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
   };
   const removeCloud = async (document: DocumentItem) => {
     if (!window.confirm(t("cloud.removeConfirm"))) return;
-    setCloudBusyId(document.id); setError("");
+    setCloudDeletingId(document.id); setError("");
     try { const result = await api.removeDocumentFromCloud(document.id); setCloudUsage(result.usage); await load(); }
     catch (err) { setError(err instanceof Error ? err.message : t("cloud.failed")); }
-    finally { setCloudBusyId(""); }
+    finally { setCloudDeletingId(""); }
   };
 
   const base = screen.tab === "trash" ? trash : screen.tab === "favorites" ? documents.filter((d) => d.favorite) : documents;
@@ -646,7 +670,7 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
                 <div className="doc-meta"><span><MessageCircleMore size={14} />{document.tipCount} Tips</span><span>{timeAgo(document.updatedAt, language, t)}</span></div>
                 {user.authMode === "supabase" && <span className={`cloud-state ${document.cloudState || "local"}`}>{document.cloudState === "synced" ? t("cloud.synced") : document.cloudState === "modified" ? t("cloud.modified") : t("cloud.local")}</span>}
                 <div className="card-actions" onClick={(e) => e.stopPropagation()}>
-                  {screen.tab === "trash" ? <><button onClick={() => void patch(document, { status: "active" })}><ArchiveRestore size={15} />{t("library.restore")}</button><button className="danger-text" onClick={() => void remove(document, true)}><Trash2 size={15} />{t("library.permanentDelete")}</button></> : <>{user.authMode === "supabase" && document.cloudState !== "synced" && <button className="cloud-action" disabled={cloudBusyId === document.id} onClick={() => void syncCloud(document)}>{cloudBusyId === document.id ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{document.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}{user.authMode === "supabase" && document.cloudState === "synced" && <button onClick={() => void removeCloud(document)}><CloudOff size={15} />{t("cloud.remove")}</button>}<button onClick={() => void remove(document)}><Trash2 size={15} />{t("library.moveTrash")}</button></>}
+                  {screen.tab === "trash" ? <><button onClick={() => void patch(document, { status: "active" })}><ArchiveRestore size={15} />{t("library.restore")}</button><button className="danger-text" onClick={() => void remove(document, true)}><Trash2 size={15} />{t("library.permanentDelete")}</button></> : <>{user.authMode === "supabase" && document.cloudState !== "synced" && <button className="cloud-action" disabled={cloudBusyId === document.id || cloudDeletingId === document.id} onClick={() => void syncCloud(document)}>{cloudBusyId === document.id ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{cloudBusyId === document.id ? t("cloud.uploading") : document.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}{user.authMode === "supabase" && Boolean(document.cloudSyncedAt) && <button className="danger-text" data-delete-cloud-file={document.id} disabled={cloudBusyId === document.id || cloudDeletingId === document.id} onClick={() => void removeCloud(document)}>{cloudDeletingId === document.id ? <LoaderCircle className="spin" size={15} /> : <CloudOff size={15} />}{cloudDeletingId === document.id ? t("cloud.deleting") : t("cloud.remove")}</button>}<button onClick={() => void remove(document)}><Trash2 size={15} />{t("library.moveTrash")}</button></>}
                 </div>
               </article>
             ))}
@@ -989,7 +1013,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   const [modelStatus, setModelStatus] = useState<AiRuntimeStatus | null>(null);
   const [webSearchEnabled, setWebSearchEnabled] = useState<boolean | null>(null);
   const [webSearchBusy, setWebSearchBusy] = useState(false);
-  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudOperation, setCloudOperation] = useState<"upload" | "delete" | null>(null);
   const dirty = useRef(false);
   const editVersion = useRef(0);
   const documentRef = useRef<DocumentItem | null>(null);
@@ -1074,10 +1098,21 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
     catch { setSaveState("error"); }
   };
   const uploadCloud = async () => {
-    setCloudBusy(true); setError("");
+    setCloudOperation("upload"); setError("");
     try { await saveNow(); const result = await api.uploadDocumentToCloud(id); documentRef.current = result.document; setDocumentItem(result.document); }
     catch (err) { setError(err instanceof Error ? err.message : t("cloud.failed")); }
-    finally { setCloudBusy(false); }
+    finally { setCloudOperation(null); }
+  };
+  const removeCloud = async () => {
+    if (!documentRef.current?.cloudSyncedAt || !window.confirm(t("cloud.removeConfirm"))) return;
+    setCloudOperation("delete"); setError("");
+    try {
+      await saveNow();
+      const result = await api.removeDocumentFromCloud(id);
+      documentRef.current = result.document;
+      setDocumentItem(result.document);
+    } catch (err) { setError(err instanceof Error ? err.message : t("cloud.failed")); }
+    finally { setCloudOperation(null); }
   };
   const leaveEditor = async () => {
     try { await saveNow(); onBack(); }
@@ -1200,7 +1235,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
       {leftTip ? renderTipPanel(leftTip, true) : <main className="editor-main">
         <header className="editor-topbar">
           <div>{!navOpen && <button className="icon-button" onClick={() => setNavOpen(true)}><Menu size={18} /></button>}<div className="doc-breadcrumb"><FileText size={16} /><span>{documentItem.title || t("editor.untitled")}</span></div></div>
-          <div className="editor-controls"><SaveIndicator state={saveState} /><button className="secondary compact" onClick={() => void manualSave()}><HardDrive size={15} />{t("common.save")}</button>{cloudEnabled && <button className="secondary compact cloud-upload-button" disabled={cloudBusy || documentItem.cloudState === "synced"} onClick={() => void uploadCloud()}>{cloudBusy ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{cloudBusy ? t("cloud.uploading") : documentItem.cloudState === "synced" ? t("cloud.synced") : documentItem.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}<button className={`icon-button ${documentItem.favorite ? "starred" : ""}`} onClick={async () => { const favorite = !documentItem.favorite; setDocumentItem({ ...documentItem, favorite }); await api.updateDocument(documentItem.id, { favorite }); }}><Star size={17} fill={documentItem.favorite ? "currentColor" : "none"} /></button><button className="icon-button" onClick={onSettings} title={t("editor.settings")}><Settings size={18} /></button></div>
+          <div className="editor-controls"><SaveIndicator state={saveState} /><button className="secondary compact" onClick={() => void manualSave()}><HardDrive size={15} />{t("common.save")}</button>{cloudEnabled && <button className="secondary compact cloud-upload-button" disabled={cloudOperation !== null || documentItem.cloudState === "synced"} onClick={() => void uploadCloud()}>{cloudOperation === "upload" ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{cloudOperation === "upload" ? t("cloud.uploading") : documentItem.cloudState === "synced" ? t("cloud.synced") : documentItem.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}{cloudEnabled && Boolean(documentItem.cloudSyncedAt) && <button className="secondary compact cloud-delete-button" data-delete-cloud-file={documentItem.id} disabled={cloudOperation !== null} onClick={() => void removeCloud()}>{cloudOperation === "delete" ? <LoaderCircle className="spin" size={15} /> : <CloudOff size={15} />}{cloudOperation === "delete" ? t("cloud.deleting") : t("cloud.remove")}</button>}<button className={`icon-button ${documentItem.favorite ? "starred" : ""}`} onClick={async () => { const favorite = !documentItem.favorite; setDocumentItem({ ...documentItem, favorite }); await api.updateDocument(documentItem.id, { favorite }); }}><Star size={17} fill={documentItem.favorite ? "currentColor" : "none"} /></button><button className="icon-button" onClick={onSettings} title={t("editor.settings")}><Settings size={18} /></button></div>
         </header>
         <div className="editor-scroll" onScroll={() => setSelection(null)}>
           <article className="document-page">
@@ -1325,7 +1360,7 @@ function AppContent() {
     {localModelsOpen ? <LocalModelsScreen onBack={() => setLocalModelsOpen(false)} onConnected={() => setSettingsRevision((value) => value + 1)} /> : screen.type === "editor"
     ? <EditorScreen id={screen.id} cloudEnabled={user.authMode === "supabase"} settingsRevision={settingsRevision} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onOpenLocalModels={openLocalModels} onRegisterSave={registerSave} />
     : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onUpload={() => fileInputRef.current?.click()} onLogout={() => { session.clear(); setSettingsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} />}
-    {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onOpenLocalModels={openLocalModels} onSaved={() => setSettingsRevision((value) => value + 1)} />}
+    {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onOpenLocalModels={openLocalModels} onSaved={() => setSettingsRevision((value) => value + 1)} onAccountDeleted={() => { session.clear(); setSettingsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} />}
     {importPhase !== "idle" && <div className={`document-drop-overlay ${importPhase}`} data-import-phase={importPhase}><div>{importPhase === "uploading" || importPhase === "saving" ? <LoaderCircle className="spin" size={28} /> : <Upload size={28} />}<h2>{importPhase === "dragging" ? t("import.dropTitle") : importPhase === "saving" ? t("import.saving") : t("import.uploading")}</h2><p>{importPhase === "dragging" ? t("import.dropHint") : t("import.wait")}</p></div></div>}
     {importError && <div className="global-import-error" data-import-error><CircleHelp size={16} /><span>{importError}</span><button onClick={() => setImportError("")}><X size={14} /><span className="sr-only">{t("common.close")}</span></button></div>}
   </>;

@@ -141,6 +141,13 @@ export async function supabaseGetUser(token: string) {
   return user;
 }
 
+export async function supabaseDeleteAccount(token: string) {
+  const response = await request("/functions/v1/delete-account", { method: "DELETE" }, token, 60_000);
+  const value = objectValue(await response.json().catch(() => null));
+  if (!value || value.deleted !== true || typeof value.userId !== "string") throw new SupabaseRequestError("Supabase 注销响应无效", 502);
+  return { deleted: true as const, userId: value.userId, storageObjectsDeleted: Number(value.storageObjectsDeleted) || 0 };
+}
+
 export function publicSupabaseUser(user: SupabaseAuthUser): User {
   if (!user || typeof user.id !== "string" || typeof user.email !== "string") throw new SupabaseRequestError("Supabase 用户信息无效", 502);
   const metadataName = typeof user.user_metadata?.name === "string" ? user.user_metadata.name.trim() : "";

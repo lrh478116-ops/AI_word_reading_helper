@@ -44,6 +44,24 @@ create schema if not exists private;
 revoke all on schema private from public, anon;
 grant usage on schema private to authenticated;
 
+-- A signed access token can remain cryptographically valid until `exp` even after
+-- its Auth user is deleted. Storage does not have a user foreign key, so every
+-- object policy must also prove that the caller still exists in auth.users.
+create or replace function private.ai_tip_active_auth_user()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select (select auth.uid()) is not null
+    and exists (
+      select 1 from auth.users u where u.id = (select auth.uid())
+    );
+$$;
+revoke all on function private.ai_tip_active_auth_user() from public, anon;
+grant execute on function private.ai_tip_active_auth_user() to authenticated;
+
 create or replace function private.ai_tip_current_cloud_bytes(p_user_id uuid)
 returns bigint
 language sql
@@ -199,16 +217,21 @@ drop policy if exists "ai_document_files_update_own" on storage.objects;
 drop policy if exists "ai_document_files_delete_own" on storage.objects;
 create policy "ai_document_files_select_own" on storage.objects
   for select to authenticated
-  using (bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text);
+  using (private.ai_tip_active_auth_user()
+    and bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text);
 create policy "ai_document_files_insert_own" on storage.objects
   for insert to authenticated
-  with check (bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text
+  with check (private.ai_tip_active_auth_user()
+    and bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text
     and private.ai_tip_storage_upload_within_quota(bucket_id, name, metadata));
 create policy "ai_document_files_update_own" on storage.objects
   for update to authenticated
-  using (bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text)
-  with check (bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text
+  using (private.ai_tip_active_auth_user()
+    and bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text)
+  with check (private.ai_tip_active_auth_user()
+    and bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text
     and private.ai_tip_storage_upload_within_quota(bucket_id, name, metadata));
 create policy "ai_document_files_delete_own" on storage.objects
   for delete to authenticated
-  using (bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text);
+  using (private.ai_tip_active_auth_user()
+    and bucket_id = 'ai-document-files' and (storage.foldername(name))[1] = (select auth.uid())::text);

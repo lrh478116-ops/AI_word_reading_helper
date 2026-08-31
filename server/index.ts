@@ -24,7 +24,7 @@ import { normalizeLanguage, translate } from "../src/i18n.js";
 import {
   CLOUD_USER_QUOTA_BYTES, SupabaseRequestError, cloudSourceExists, cloudSourcePath, cloudSourcePaths, deleteCloudDocuments, deleteCloudSource, deleteCloudSources, deleteCloudTips,
   downloadCloudSource, fetchCloudSnapshot, fetchCloudUsage, legacyCloudSourcePath, publicSupabaseUser, supabaseEnabled, supabaseGetUser,
-  supabaseRefresh, supabaseRequestPasswordRecovery, supabaseSignIn, supabaseSignUp, supabaseUpdatePassword,
+  supabaseDeleteAccount, supabaseRefresh, supabaseRequestPasswordRecovery, supabaseSignIn, supabaseSignUp, supabaseUpdatePassword,
   supabaseVerifyOtp, uploadCloudSource, upsertCloudChanges, type SupabaseSession
 } from "./supabase.js";
 
@@ -593,6 +593,43 @@ app.post("/api/auth/refresh", async (req, res) => {
 });
 
 app.get("/api/auth/me", auth, (req: AuthedRequest, res) => res.json({ user: publicUser(req.user!) }));
+
+async function purgeLocalUserData(userId: string, removeUser: boolean) {
+  const db = await readDb();
+  const documentIds = db.documents.filter((document) => document.userId === userId).map((document) => document.id);
+  db.documents = db.documents.filter((document) => document.userId !== userId);
+  db.tips = db.tips.filter((tip) => tip.userId !== userId);
+  db.settings = db.settings.filter((settings) => settings.userId !== userId);
+  if (removeUser) db.users = db.users.filter((user) => user.id !== userId);
+  await writeDb(db, { skipCloud: true });
+  await Promise.all(documentIds.map((id) => rm(path.join(uploadsDir, id), { recursive: true, force: true })));
+  cloudPullCache.delete(userId);
+  return { documentsDeleted: documentIds.length };
+}
+
+app.delete("/api/auth/account", auth, async (req: AuthedRequest, res) => {
+  const user = req.user!;
+  const confirmation = String(req.body.confirmation || "").trim().toLowerCase();
+  if (confirmation !== user.email.toLowerCase()) return res.status(400).json({ code: "ACCOUNT_CONFIRMATION_MISMATCH", error: "请输入当前账户邮箱以确认删除" });
+  if (req.authMode === "supabase") {
+    if (!req.cloudToken) return res.status(401).json({ error: "云端登录状态已失效，请重新登录" });
+    try {
+      const remote = await supabaseDeleteAccount(req.cloudToken);
+      if (remote.userId !== user.id) return res.status(502).json({ error: "云端注销返回了不匹配的账户" });
+      const local = await purgeLocalUserData(user.id, true);
+      return res.json({ deleted: true, localDataCleared: true, storageObjectsDeleted: remote.storageObjectsDeleted, documentsDeleted: local.documentsDeleted });
+    } catch (error) {
+      const status = error instanceof SupabaseRequestError ? Math.max(400, Math.min(599, error.status)) : 503;
+      return res.status(status).json({ error: error instanceof Error ? error.message : "账户删除失败" });
+    }
+  }
+  try {
+    const local = await purgeLocalUserData(user.id, false);
+    return res.json({ deleted: false, localDataCleared: true, documentsDeleted: local.documentsDeleted });
+  } catch (error) {
+    return res.status(500).json({ error: error instanceof Error ? error.message : "本地数据清理失败" });
+  }
+});
 
 const defaultPrompt = DEFAULT_SYSTEM_PROMPTS["zh-CN"];
 
@@ -1454,7 +1491,10 @@ app.delete("/api/documents/:id/cloud", auth, async (req: AuthedRequest, res) => 
   await deleteCloudDocuments(req.cloudToken, [document.id]);
   delete document.cloudSyncedAt; delete document.cloudState;
   await writeDb(db, { skipCloud: true });
-  res.json({ document: compactDocument(document, db.tips), usage: await fetchCloudUsage(req.cloudToken) });
+  // Cloud deletion is already complete at this point. A non-authoritative usage
+  // refresh must not rewrite that success into a failure and encourage retries.
+  const usage = await fetchCloudUsage(req.cloudToken).catch(() => null);
+  res.json({ document: compactDocument(document, db.tips), usage });
 });
 
 app.post("/api/documents/:id/tips", auth, async (req: AuthedRequest, res) => {

@@ -28,6 +28,10 @@ let dataFailure = false;
 let documentUpsertFailure = false;
 let storageUploadFailure = false;
 let compressedDownloadFailureStatus = 0;
+let cloudUsageFailure = false;
+let accountDeletionFailure = false;
+let cloudUserDeleted = false;
+let accountDeletionCalls = 0;
 
 function validStorageObjectPath(objectPath) {
   return objectPath.split("/").every((segment) => segment.length > 0 && /^[A-Za-z0-9_\-.'!,*&$@=;:+?() ]+$/.test(segment));
@@ -37,7 +41,7 @@ function authUser(req) {
   const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (token === pendingAccessToken) return pendingUser;
   if (token === recoveryAccessToken) return recoveryUser;
-  return token === accessToken || token === refreshedToken ? cloudUser : null;
+  return !cloudUserDeleted && (token === accessToken || token === refreshedToken) ? cloudUser : null;
 }
 
 const mock = createServer(async (req, res) => {
@@ -117,12 +121,22 @@ const mock = createServer(async (req, res) => {
     res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }] }));
     return;
   }
+  if (url.pathname === "/functions/v1/delete-account" && req.method === "DELETE") {
+    accountDeletionCalls += 1;
+    const user = authUser(req);
+    if (!user) { res.statusCode = 401; res.end(JSON.stringify({ message: "invalid token" })); return; }
+    if (accountDeletionFailure) { res.statusCode = 503; res.end(JSON.stringify({ message: "simulated account deletion failure" })); return; }
+    cloudUserDeleted = true;
+    res.end(JSON.stringify({ deleted: true, userId: user.id, storageObjectsDeleted: [...objects.keys()].filter((name) => name.startsWith(`${user.id}/`)).length }));
+    return;
+  }
   const user = authUser(req);
   if (!user) { res.statusCode = 401; res.end(JSON.stringify({ message: "not authenticated" })); return; }
   if (dataFailure && (url.pathname.startsWith("/rest/v1/") || url.pathname.startsWith("/storage/v1/"))) {
     res.statusCode = 503; res.end(JSON.stringify({ message: "simulated cloud outage" })); return;
   }
   if (url.pathname === "/rest/v1/rpc/ai_tip_cloud_usage" && req.method === "POST") {
+    if (cloudUsageFailure) { res.statusCode = 503; res.end(JSON.stringify({ message: "simulated usage refresh failure" })); return; }
     const storageBytes = [...objects.entries()].filter(([name]) => name.startsWith(`${user.id}/`)).reduce((total, [, value]) => total + value.length, 0);
     const databaseBytes = [...documents.values()].filter((row) => row.user_id === user.id).reduce((total, row) => total + Buffer.byteLength(JSON.stringify(row.payload)), 0)
       + [...tips.values()].filter((row) => row.user_id === user.id).reduce((total, row) => total + Buffer.byteLength(JSON.stringify(row.payload)), 0);
@@ -431,8 +445,12 @@ try {
   objectContentTypes.set(sourcePath, "application/gzip");
   await request(`/documents/${imported.document.id}`, { method: "DELETE" }, refreshed.token);
   if (!objects.has(sourcePath) || !objects.has(legacySourcePath)) throw new Error("普通本地删除错误影响了云端副本");
-  await request(`/documents/${imported.document.id}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) }, refreshed.token);
-  await request(`/documents/${imported.document.id}/cloud`, { method: "DELETE" }, refreshed.token);
+  const modifiedBeforeCloudDelete = await request(`/documents/${imported.document.id}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) }, refreshed.token);
+  if (modifiedBeforeCloudDelete.document.cloudState !== "modified" || !modifiedBeforeCloudDelete.document.cloudSyncedAt) throw new Error("云副本存在且本地已修改的测试前提未建立");
+  cloudUsageFailure = true;
+  const removedCloud = await request(`/documents/${imported.document.id}/cloud`, { method: "DELETE" }, refreshed.token);
+  cloudUsageFailure = false;
+  if (removedCloud.document.cloudState !== "local" || removedCloud.document.cloudSyncedAt || removedCloud.usage !== null) throw new Error("删除云端文件后没有保留本地文档并清除云状态，或用量刷新失败被误报");
   if (objects.has(sourcePath) || objects.has(legacySourcePath)) throw new Error("显式移出云端没有同时清理新压缩对象与旧原始对象");
 
   dataFailure = true;
@@ -444,7 +462,43 @@ try {
   const localStillWorks = await request("/documents", { method: "POST", body: "{}" }, localLogin.token);
   if (!localStillWorks.document) throw new Error("Supabase 故障错误阻断了仅本地模式");
 
-  console.log(JSON.stringify({ localSupabaseRequests: 0, cloudAccountLocalWritesBeforeClick: true, explicitCloudUploadPredictionBearing: true, localSourceBytesUnchanged: true, confirmationResponseHandled: true, unverifiedUserNotPersisted: true, signupOtpVerified: true, accountExistsDetected: true, recoveryOtpVerified: true, passwordUpdatedAfterRecovery: true, malformedSessionRejected: true, cloudAuth: true, forgedTokenBlocked: true, localJwtCloudImpersonationBlocked: true, cloudDocuments: true, cloudTipsAndAnswers: true, localSecretsExcluded: true, unicodeOriginalNamePreserved: true, asciiStorageObjectKey: true, compressedArchiveOnly: true, archiveRoundTrip: true, compressedSizeControlsUpload: true, fiveMiBPreflight: true, corruptArchiveRejected: true, legacyRawSourceRecovered: true, non404FallbackBlocked: true, ordinaryDeleteCloudIsolation: true, explicitDualPathCloudRemove: true, refresh: true, cacheRehydrated: true, cloudFailureExplicit: true, cloudFailureLocalSaveStillWorks: true, localFailureIsolation: true }, null, 2));
+  dataFailure = false;
+  const deletionCallsBeforeMismatch = accountDeletionCalls;
+  const mismatchedDeletion = await fetch(`${base}/auth/account`, { method: "DELETE", headers: { "Content-Type": "application/json", Authorization: `Bearer ${refreshed.token}` }, body: JSON.stringify({ confirmation: "wrong@example.test" }) });
+  if (mismatchedDeletion.status !== 400 || accountDeletionCalls !== deletionCallsBeforeMismatch) throw new Error("错误确认邮箱仍触发了远端账户删除");
+
+  const storeBeforeFailedDeletion = JSON.parse(await readFile(path.join(tempData, "store.json"), "utf8"));
+  const userDocumentsBeforeFailedDeletion = storeBeforeFailedDeletion.documents.filter((item) => item.userId === cloudUser.id).length;
+  accountDeletionFailure = true;
+  const failedDeletion = await fetch(`${base}/auth/account`, { method: "DELETE", headers: { "Content-Type": "application/json", Authorization: `Bearer ${refreshed.token}` }, body: JSON.stringify({ confirmation: cloudUser.email }) });
+  accountDeletionFailure = false;
+  if (failedDeletion.status !== 503) throw new Error("远端删除失败没有明确阻止注销完成");
+  const storeAfterFailedDeletion = JSON.parse(await readFile(path.join(tempData, "store.json"), "utf8"));
+  if (!storeAfterFailedDeletion.users.some((item) => item.id === cloudUser.id) || storeAfterFailedDeletion.documents.filter((item) => item.userId === cloudUser.id).length !== userDocumentsBeforeFailedDeletion) {
+    throw new Error("远端删除失败时错误清除了本地用户或文档");
+  }
+
+  const successfulDeletion = await request("/auth/account", { method: "DELETE", body: JSON.stringify({ confirmation: cloudUser.email }) }, refreshed.token);
+  if (!successfulDeletion.deleted || !successfulDeletion.localDataCleared) throw new Error("远端删除成功后没有返回可验证的完成状态");
+  const storeAfterSuccessfulDeletion = JSON.parse(await readFile(path.join(tempData, "store.json"), "utf8"));
+  if (storeAfterSuccessfulDeletion.users.some((item) => item.id === cloudUser.id)
+    || storeAfterSuccessfulDeletion.documents.some((item) => item.userId === cloudUser.id)
+    || storeAfterSuccessfulDeletion.tips.some((item) => item.userId === cloudUser.id)
+    || storeAfterSuccessfulDeletion.settings.some((item) => item.userId === cloudUser.id)) {
+    throw new Error("账户删除成功后本地身份或数据仍可被正式路径消费");
+  }
+  const staleToken = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${refreshed.token}` } });
+  if (staleToken.status !== 401) throw new Error("账户删除后旧 access token 仍可进入正式 API");
+
+  const deletionCallsBeforeLocalClear = accountDeletionCalls;
+  const localClear = await request("/auth/account", { method: "DELETE", body: JSON.stringify({ confirmation: "demo@aitip.local" }) }, localLogin.token);
+  if (localClear.deleted !== false || !localClear.localDataCleared || accountDeletionCalls !== deletionCallsBeforeLocalClear) throw new Error("仅本地清理错误调用云删除或错误声称删除云账户");
+  const localAfterClear = await request("/documents", {}, localLogin.token);
+  if (localAfterClear.documents.length !== 0) throw new Error("仅本地清理后旧文档仍可恢复");
+  const storeAfterLocalClear = JSON.parse(await readFile(path.join(tempData, "store.json"), "utf8"));
+  if (!storeAfterLocalClear.users.some((item) => item.id === localLogin.user.id) || storeAfterLocalClear.documents.some((item) => item.userId === localLogin.user.id)) throw new Error("仅本地清理删除了固定入口或保留了本地文档");
+
+  console.log(JSON.stringify({ localSupabaseRequests: 0, cloudAccountLocalWritesBeforeClick: true, explicitCloudUploadPredictionBearing: true, localSourceBytesUnchanged: true, confirmationResponseHandled: true, unverifiedUserNotPersisted: true, signupOtpVerified: true, accountExistsDetected: true, recoveryOtpVerified: true, passwordUpdatedAfterRecovery: true, malformedSessionRejected: true, cloudAuth: true, forgedTokenBlocked: true, localJwtCloudImpersonationBlocked: true, cloudDocuments: true, cloudTipsAndAnswers: true, localSecretsExcluded: true, unicodeOriginalNamePreserved: true, asciiStorageObjectKey: true, compressedArchiveOnly: true, archiveRoundTrip: true, compressedSizeControlsUpload: true, fiveMiBPreflight: true, corruptArchiveRejected: true, legacyRawSourceRecovered: true, non404FallbackBlocked: true, ordinaryDeleteCloudIsolation: true, explicitDualPathCloudRemove: true, modifiedCloudCopyCanBeDeleted: true, usageRefreshFailureDoesNotRewriteDeletion: true, refresh: true, cacheRehydrated: true, cloudFailureExplicit: true, cloudFailureLocalSaveStillWorks: true, localFailureIsolation: true, deletionConfirmationBlocksRemoteCall: true, deletionFailurePreservesLocalData: true, deletionSuccessPurgesLocalData: true, staleDeletedUserTokenBlocked: true, localClearNeverCallsSupabase: true, localDocumentsDoNotReturn: true }, null, 2));
 } finally {
   await new Promise((resolve) => appServer?.listening ? appServer.close(resolve) : resolve());
   await new Promise((resolve) => mock.close(resolve));

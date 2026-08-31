@@ -101,6 +101,7 @@ export const api = {
   resetPassword: (email: string, code: string, password: string) =>
     request<AuthResult>("/auth/password/reset", { method: "POST", body: JSON.stringify({ email, code, password }) }),
   me: () => request<{ user: User }>("/auth/me"),
+  deleteAccount: (confirmation: string) => request<{ deleted: boolean; localDataCleared: boolean; storageObjectsDeleted?: number; documentsDeleted: number }>("/auth/account", { method: "DELETE", body: JSON.stringify({ confirmation }) }),
   settings: () => request<{ settings: AiSettings }>("/settings"),
   updateWebSearchEnabled: (webSearchEnabled: boolean, language: PromptLanguage) =>
     request<{ settings: AiSettings }>("/settings", { method: "PUT", body: JSON.stringify({ webSearchEnabled, language }) }),
@@ -164,7 +165,7 @@ export const api = {
     request<{ ok: boolean }>(`/documents/${id}?permanent=${permanent}`, { method: "DELETE" }),
   cloudUsage: () => request<{ usage: CloudUsage }>("/cloud/usage"),
   uploadDocumentToCloud: (id: string) => request<{ document: DocumentItem; usage: CloudUsage }>(`/documents/${id}/cloud`, { method: "POST", body: "{}" }),
-  removeDocumentFromCloud: (id: string) => request<{ document: DocumentItem; usage: CloudUsage }>(`/documents/${id}/cloud`, { method: "DELETE" }),
+  removeDocumentFromCloud: (id: string) => request<{ document: DocumentItem; usage: CloudUsage | null }>(`/documents/${id}/cloud`, { method: "DELETE" }),
   upload: (file: File) => {
     const data = new FormData();
     data.append("file", file);
