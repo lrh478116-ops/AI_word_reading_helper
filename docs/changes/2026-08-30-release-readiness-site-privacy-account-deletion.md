@@ -135,3 +135,5 @@ Edge Function 失败时，本地数据和会话不能被静默当成“账户已
 新增负向测试要求：缺少官方 `configure-pages`、`upload-pages-artifact`、`deploy-pages` 任一阶段时失败；artifact 路径不是 `website/` 时失败；权限扩大或引用第三方部署 Action 时不予验收。当前功能分支不自动合并 `main`，避免绕过仓库的发布分支策略。
 
 首次远端运行 `33351924015` 在 `Configure GitHub Pages` 失败：仓库尚未启用 Pages，而 `configure-pages` 日志明确显示 `enablement: false`。这证明工作流已被正式入口调用但尚未完成部署，只达到 `LEVEL_3_CONSUMED`。统一修复为在官方 `configure-pages` 步骤显式设置 `enablement: true`，并新增静态回归防止该初始化参数以后被删除；修复后仍须以远端 workflow 成功和公开路由 200 为验收条件。
+
+修复后的远端运行 `33352007196` 确实消费了 `enablement: true`，但 GitHub Actions 内置令牌创建 Pages 站点时返回 `Resource not accessible by integration`。随后使用仓库所有者已登录的 GitHub CLI 调用正式 Pages API，GitHub 返回 HTTP 422：`Your current plan does not support GitHub Pages for this repository.` 仓库当前为 `PRIVATE`。因此部署阻塞被确认是私有仓库套餐能力，而不是站点代码或 artifact 路径；公开三路由仍为 404，本项继续标记 `NOT_CAUSALLY_VERIFIED`。不得为了让验收变绿而擅自把源代码仓库改成公开。可选解除方式只有：升级到支持私有仓库 Pages 的套餐、经用户明确授权公开当前仓库，或另建只包含 `website/` 的公开站点仓库。
