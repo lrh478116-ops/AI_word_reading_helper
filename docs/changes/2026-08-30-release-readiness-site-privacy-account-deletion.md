@@ -133,3 +133,5 @@ Edge Function 失败时，本地数据和会话不能被静默当成“账户已
 本次补齐 GitHub 官方 Pages 工作流，部署输入必须是仓库内固定的 `website/` 目录；工作流只授予 `contents: read`、`pages: write` 和 `id-token: write`，不得把整个仓库、`.env`、安装包、测试账号或服务端密钥上传为站点制品。部署必须由 push 或手动触发产生可追踪的 Pages deployment；工作流文件存在最多达到 `LEVEL_3_CONSUMED`，只有远端 workflow 成功并且三个公开 HTTPS 路由均返回 200 才能达到 `LEVEL_5_PREDICTION_BEARING`。
 
 新增负向测试要求：缺少官方 `configure-pages`、`upload-pages-artifact`、`deploy-pages` 任一阶段时失败；artifact 路径不是 `website/` 时失败；权限扩大或引用第三方部署 Action 时不予验收。当前功能分支不自动合并 `main`，避免绕过仓库的发布分支策略。
+
+首次远端运行 `33351924015` 在 `Configure GitHub Pages` 失败：仓库尚未启用 Pages，而 `configure-pages` 日志明确显示 `enablement: false`。这证明工作流已被正式入口调用但尚未完成部署，只达到 `LEVEL_3_CONSUMED`。统一修复为在官方 `configure-pages` 步骤显式设置 `enablement: true`，并新增静态回归防止该初始化参数以后被删除；修复后仍须以远端 workflow 成功和公开路由 200 为验收条件。

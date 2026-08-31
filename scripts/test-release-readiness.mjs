@@ -40,6 +40,7 @@ assert.ok((appSource.match(/data-delete-cloud-file/g) || []).length >= 2, "cloud
 assert.match(i18n, /删除云端文件/);
 assert.match(i18n, /account\.delete/);
 assert.match(pagesWorkflow, /actions\/configure-pages@v\d+/);
+assert.match(pagesWorkflow, /enablement:\s*true/, "Pages workflow must initialize Pages when the repository has not enabled it yet");
 assert.match(pagesWorkflow, /actions\/upload-pages-artifact@v\d+/);
 assert.match(pagesWorkflow, /actions\/deploy-pages@v\d+/);
 assert.match(pagesWorkflow, /path:\s*website\/?\s*$/m, "Pages artifact must contain only website/");
