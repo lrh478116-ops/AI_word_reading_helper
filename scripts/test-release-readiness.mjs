@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 const root = path.resolve(".");
@@ -17,10 +17,9 @@ for (const [index, html] of pages.entries()) {
   assert.doesNotMatch(html, /(google-analytics|googletagmanager|facebook\.net|clarity\.ms|umami|plausible|matomo)/i, `${requiredPages[index]} contains analytics or tracking`);
 }
 
-const [home, privacy, deletion, siteCss, siteScript, appCss, appSource, i18n, pagesWorkflow] = await Promise.all([
+const [home, privacy, deletion, siteCss, siteScript, appCss, appSource, i18n] = await Promise.all([
   read("website/index.html"), read("website/privacy/index.html"), read("website/account-deletion/index.html"),
-  read("website/assets/site.css"), read("website/assets/site.js"), read("src/styles.css"), read("src/App.tsx"), read("src/i18n.ts"),
-  read(".github/workflows/pages.yml")
+  read("website/assets/site.css"), read("website/assets/site.js"), read("src/styles.css"), read("src/App.tsx"), read("src/i18n.ts")
 ]);
 assert.match(home, /2280810215@qq\.com/);
 assert.match(home, /privacy\//);
@@ -39,15 +38,12 @@ assert.match(appSource, /data-delete-account/);
 assert.ok((appSource.match(/data-delete-cloud-file/g) || []).length >= 2, "cloud file deletion must be present in both the library and editor clients");
 assert.match(i18n, /删除云端文件/);
 assert.match(i18n, /account\.delete/);
-assert.match(pagesWorkflow, /actions\/configure-pages@v\d+/);
-assert.match(pagesWorkflow, /enablement:\s*true/, "Pages workflow must initialize Pages when the repository has not enabled it yet");
-assert.match(pagesWorkflow, /actions\/upload-pages-artifact@v\d+/);
-assert.match(pagesWorkflow, /actions\/deploy-pages@v\d+/);
-assert.match(pagesWorkflow, /path:\s*website\/?\s*$/m, "Pages artifact must contain only website/");
-assert.match(pagesWorkflow, /contents:\s*read/);
-assert.match(pagesWorkflow, /pages:\s*write/);
-assert.match(pagesWorkflow, /id-token:\s*write/);
-assert.doesNotMatch(pagesWorkflow, /peaceiris|JamesIves|gh-pages/i, "third-party Pages deployment action is not allowed");
+assert.match(appSource, /https:\/\/lrh478116-ops\.github\.io\/ai-tip-support-site/);
+assert.doesNotMatch(appSource, /github\.io\/AI_word_reading_helper/);
+let obsoletePrivatePagesWorkflow = true;
+try { await access(path.join(root, ".github/workflows/pages.yml")); }
+catch { obsoletePrivatePagesWorkflow = false; }
+assert.equal(obsoletePrivatePagesWorkflow, false, "私有源码仓库仍保留必然失败的 Pages 工作流");
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://127.0.0.1");
@@ -77,4 +73,4 @@ for (const name of screenshots) {
   assert.ok(accepted.has(size), `${name} has unsupported Mac App Store dimensions ${size}`);
 }
 
-console.log(JSON.stringify({ releaseWebsite: true, privacyDisclosures: true, deletionInstructions: true, trackerFree: true, appPrivacyEntry: true, macScreenshots: screenshots.length }));
+console.log(JSON.stringify({ localReleaseWebsite: true, onlineVerificationRequired: "pnpm release:verify:online", privacyDisclosures: true, deletionInstructions: true, trackerFree: true, appPrivacyEntry: true, macScreenshots: screenshots.length }));

@@ -10,6 +10,7 @@ import { downloadOfficialModelArtifact } from "./model-download.mjs";
 import { chromiumNetFetch, chromiumProxyDescription } from "./chromium-net-fetch.mjs";
 import { createRememberedLoginStore } from "./login-credentials.mjs";
 import { downloadOfficialOllamaInstaller, fetchLatestOllamaInstallerInfo, ollamaInstallerAssetName, ollamaInstallerStartUrl } from "./ollama-installer.mjs";
+import { isAllowedAppNavigation, isAllowedExternalUrl } from "./navigation-policy.mjs";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -308,12 +309,12 @@ async function createWindow() {
 
   mainWindow.once("ready-to-show", () => { if (!smokeTest) mainWindow?.show(); });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^(https?:|mailto:)/i.test(url)) void shell.openExternal(url);
+    if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
     const allowedOrigin = process.argv.includes("--dev") ? "http://127.0.0.1:5173" : serverURL;
-    if (!url.startsWith(allowedOrigin)) event.preventDefault();
+    if (!isAllowedAppNavigation(url, allowedOrigin)) event.preventDefault();
   });
   await mainWindow.loadURL(process.argv.includes("--dev") ? "http://127.0.0.1:5173" : serverURL);
   if (smokeTest) {

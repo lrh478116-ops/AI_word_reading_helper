@@ -8,6 +8,6 @@ Run `node scripts/test-release-readiness.mjs` from the repository root after the
 
 ## Publishing
 
-Publish this directory at a stable HTTPS origin, then set `VITE_AI_TIP_PUBLIC_SITE_URL` to that origin before building the store package. The default GitHub Pages path in the source is suitable for development only. Apple App Store Connect should receive direct URLs for `/privacy/` and `/account-deletion/`.
+The canonical public origin is `https://lrh478116-ops.github.io/ai-tip-support-site`. Only the contents of this directory are mirrored to the public `lrh478116-ops/ai-tip-support-site` repository; the application source repository remains private. Run `pnpm release:verify:online` after every publication. Apple App Store Connect should receive direct URLs for `/privacy/` and `/account-deletion/`.
 
 For distribution in mainland China, replace any filing placeholder only after the real operator, domain and access provider have completed the required ICP/APP filing. Never insert a fabricated filing number.

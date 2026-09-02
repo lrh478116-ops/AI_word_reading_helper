@@ -27,6 +27,7 @@ import {
   supabaseDeleteAccount, supabaseRefresh, supabaseRequestPasswordRecovery, supabaseSignIn, supabaseSignUp, supabaseUpdatePassword,
   supabaseVerifyOtp, uploadCloudSource, upsertCloudChanges, type SupabaseSession
 } from "./supabase.js";
+import { MIN_PASSWORD_LENGTH, isAcceptableNewPassword } from "./password-policy.ts";
 
 export { DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, resolveSystemPrompt } from "../src/prompts.js";
 export { PROVIDER_REGISTRY, migrateProviderPreset } from "../src/providers.js";
@@ -489,8 +490,8 @@ async function auth(req: AuthedRequest, res: Response, next: NextFunction) {
 
 app.post("/api/auth/register", async (req, res) => {
   const { name, email, password } = req.body as Record<string, string>;
-  if (!name?.trim() || !email?.trim() || !password || password.length < 6) {
-    return res.status(400).json({ error: "请填写姓名、邮箱和至少 6 位密码" });
+  if (!name?.trim() || !email?.trim() || !isAcceptableNewPassword(password)) {
+    return res.status(400).json({ error: `请填写姓名、邮箱和至少 ${MIN_PASSWORD_LENGTH} 位密码` });
   }
   if (supabaseEnabled()) {
     try {
@@ -549,7 +550,7 @@ app.post("/api/auth/password/reset", async (req, res) => {
   const code = String(req.body.code || "").trim();
   const password = String(req.body.password || "");
   if (!email || !/^\d{6}$/.test(code)) return res.status(400).json({ error: "请输入邮箱收到的 6 位验证码" });
-  if (password.length < 6) return res.status(400).json({ error: "新密码至少需要 6 位" });
+  if (!isAcceptableNewPassword(password)) return res.status(400).json({ error: `新密码至少需要 ${MIN_PASSWORD_LENGTH} 位` });
   if (!supabaseEnabled()) return res.status(503).json({ error: "Supabase 密码恢复未启用" });
   try {
     const cloudSession = await supabaseVerifyOtp(email, code, "recovery");

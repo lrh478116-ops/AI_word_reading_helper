@@ -23,7 +23,7 @@ type ImportPhase = "idle" | "dragging" | "saving" | "uploading";
 
 const DOCUMENT_ACCEPT = ".txt,.md,.markdown,.docx,.pdf";
 const CONTACT_EMAIL = "2280810215@qq.com";
-const PUBLIC_SITE_URL = String(import.meta.env.VITE_AI_TIP_PUBLIC_SITE_URL || "https://lrh478116-ops.github.io/AI_word_reading_helper").replace(/\/$/, "");
+const PUBLIC_SITE_URL = String(import.meta.env.VITE_AI_TIP_PUBLIC_SITE_URL || "https://lrh478116-ops.github.io/ai-tip-support-site").replace(/\/$/, "");
 const SUPPORTED_DOCUMENT_EXTENSIONS = new Set(DOCUMENT_ACCEPT.split(","));
 
 function documentExtension(file: Pick<File, "name">) {
@@ -161,7 +161,7 @@ function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
           {mode === "register" && <label>{t("auth.name")}<input autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} placeholder={t("auth.namePlaceholder")} required /></label>}
           <label>{t("auth.email")}<input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required readOnly={mode === "verify-registration" || mode === "reset"} /></label>
           {showCode && <label>{t("auth.code")}<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder={t("auth.codePlaceholder")} required /></label>}
-          {showPassword && <label>{mode === "reset" ? t("auth.newPassword") : t("auth.password")}<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t("auth.passwordPlaceholder")} required minLength={6} /></label>}
+          {showPassword && <label>{mode === "reset" ? t("auth.newPassword") : t("auth.password")}<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t(mode === "login" ? "auth.passwordLoginPlaceholder" : "auth.passwordPlaceholder")} required minLength={mode === "login" ? 1 : 8} /></label>}
           {mode === "login" && <div className="auth-remember-row"><label><input type="checkbox" data-remember-login checked={rememberLogin} disabled={!credentialStorageAvailable} onChange={(event) => setRememberLogin(event.target.checked)} /><span>{t("auth.rememberLogin")}</span></label>{rememberLogin && <button type="button" onClick={() => { setRememberLogin(false); void window.aiTipDesktop?.clearRememberedLogin(); }}>{t("auth.clearRemembered")}</button>}</div>}
           {mode === "login" && !credentialStorageAvailable && <p className="auth-security-note">{t("auth.secureStorageUnavailable")}</p>}
           {(mode === "login" || (mode === "register" && accountExists)) && <button type="button" className="auth-inline-action" onClick={() => changeMode("recover")}>{t("auth.forgot")}</button>}

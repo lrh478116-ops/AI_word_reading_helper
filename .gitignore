@@ -1,26 +1,14 @@
 node_modules/
 dist/
 dist-electron/
-release/
+/release/
 .tmp-test-data/
+.release-site-publish/
 .env
 data/
 *.log
 .DS_Store
 
-release.zip
+/release.zip
 .release-archive/
 .tmp-llama-runtime/
-
-# Dependencies
-node_modules/
-
-# Generated release files
-release/
-release.zip
-# Dependencies
-node_modules/
-
-# Generated release files
-release/
-release.zip

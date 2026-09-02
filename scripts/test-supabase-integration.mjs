@@ -258,6 +258,9 @@ try {
   if (!localStoredBytes.equals(pdfBytes)) throw new Error("仅本地模式没有保持原始文件字节");
   if (requests.length !== 0) throw new Error("仅本地模式错误调用了 Supabase");
 
+  const weakRegistration = await fetch(`${base}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "弱密码用户", email: "weak@example.test", password: "1234567" }) });
+  if (weakRegistration.status !== 400 || requests.length !== 0) throw new Error("7 位注册密码没有在正式 API 入口拒绝，或拒绝前已调用 Supabase");
+
   const pendingResponse = await fetch(`${base}/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "待确认用户", email: pendingUser.email, password: "pending-pass-123" }) });
   const pendingRegistration = await pendingResponse.json();
   if (pendingResponse.status !== 202 || pendingRegistration.confirmationRequired !== true || pendingRegistration.token || pendingRegistration.refreshToken) {
@@ -280,6 +283,9 @@ try {
 
   const recoveryRequested = await request("/auth/password/recover", { method: "POST", body: JSON.stringify({ email: recoveryUser.email }) });
   if (!recoveryRequested.verificationRequired || !requests.some((item) => item.path === "/auth/v1/recover")) throw new Error("忘记密码没有调用 Supabase recovery 邮件入口");
+  const verificationCallsBeforeWeakReset = requests.filter((item) => item.path === "/auth/v1/verify").length;
+  const weakReset = await fetch(`${base}/auth/password/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: recoveryUser.email, code: "654321", password: "1234567" }) });
+  if (weakReset.status !== 400 || requests.filter((item) => item.path === "/auth/v1/verify").length !== verificationCallsBeforeWeakReset) throw new Error("7 位重置密码没有在正式 API 入口拒绝，或拒绝前已消费验证码");
   const badRecovery = await fetch(`${base}/auth/password/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: recoveryUser.email, code: "000000", password: "new-pass-123" }) });
   if (badRecovery.status !== 401) throw new Error("错误的恢复验证码没有被 Supabase 拒绝");
   const recovered = await request("/auth/password/reset", { method: "POST", body: JSON.stringify({ email: recoveryUser.email, code: "654321", password: "new-pass-123" }) });

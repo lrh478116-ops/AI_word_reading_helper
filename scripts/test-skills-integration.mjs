@@ -280,7 +280,7 @@ try {
   if (persistedSettings.includes("test-key") || persistedSettings.includes("tvly-test") || !persistedSettings.includes("safe:v1:")) throw new Error("API Key 未加密保存");
   const documents = await request("/documents", {}, token);
   if (documents.documents.length !== 0) throw new Error("旧 Transformer 种子文档没有从正式启动路径移除");
-  const registered = await request("/auth/register", { method: "POST", body: JSON.stringify({ name: "新用户", email: "fresh@example.com", password: "123456" }) });
+  const registered = await request("/auth/register", { method: "POST", body: JSON.stringify({ name: "新用户", email: "fresh@example.com", password: "12345678" }) });
   const registeredDocuments = await request("/documents", {}, registered.token);
   if (registeredDocuments.documents.length !== 0) throw new Error("注册路径仍然创建示例文档");
 
