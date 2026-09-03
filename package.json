@@ -4,6 +4,7 @@
   "version": "1.12.11",
   "description": "面向深度阅读的本地 AI 文档与 Tip 对话应用",
   "author": "AI Tip",
+  "license": "MIT",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -18,7 +19,8 @@
     "desktop:start": "pnpm desktop:prepare && electron electron/main.mjs",
     "desktop:smoke": "pnpm desktop:prepare && electron electron/main.mjs --smoke-test",
     "search:live": "pnpm desktop:prepare && node scripts/test-live-reference-search.mjs",
-    "skills:test": "pnpm desktop:prepare && node scripts/test-release-hardening.mjs && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-pdf-tip-anchors.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-login-credentials.mjs && node scripts/test-managed-ollama-runtime.mjs && node scripts/test-bundled-llama-runtime.mjs && node scripts/test-electron-model-download.mjs && node scripts/test-ollama-installer.mjs && node scripts/test-local-model-integration.mjs && node scripts/test-skills-integration.mjs && node scripts/test-supabase-integration.mjs && node scripts/test-account-deletion-edge.mjs && node scripts/test-release-readiness.mjs && electron scripts/test-cloud-file-client-electron.mjs",
+    "skills:test": "pnpm desktop:prepare && node scripts/test-release-hardening.mjs && node scripts/test-public-repository-safety.mjs && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-pdf-tip-anchors.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-login-credentials.mjs && node scripts/test-managed-ollama-runtime.mjs && node scripts/test-bundled-llama-runtime.mjs && node scripts/test-electron-model-download.mjs && node scripts/test-ollama-installer.mjs && node scripts/test-local-model-integration.mjs && node scripts/test-skills-integration.mjs && node scripts/test-supabase-integration.mjs && node scripts/test-account-deletion-edge.mjs && node scripts/test-release-readiness.mjs && electron scripts/test-cloud-file-client-electron.mjs",
+    "repository:safety": "node scripts/test-public-repository-safety.mjs",
     "release:verify:online": "node scripts/test-release-site-online.mjs",
     "release:manifest:win": "node scripts/create-release-manifest.mjs",
     "desktop:dist:win": "pnpm desktop:prepare && electron-builder --win nsis --x64",
@@ -86,6 +88,7 @@
       "icon": "build/icon.png",
       "extraResources": [
         { "from": "runtime/llama.cpp/win-x64", "to": "llama.cpp/win-x64", "filter": ["**/*"] },
+        { "from": "LICENSE", "to": "LICENSE.txt" },
         { "from": "THIRD-PARTY-NOTICES.txt", "to": "THIRD-PARTY-NOTICES.txt" }
       ],
       "target": [
@@ -119,6 +122,7 @@
       "extraResources": [
         { "from": "runtime/llama.cpp/mac-arm64", "to": "llama.cpp/mac-arm64", "filter": ["**/*"] },
         { "from": "runtime/llama.cpp/mac-x64", "to": "llama.cpp/mac-x64", "filter": ["**/*"] },
+        { "from": "LICENSE", "to": "LICENSE.txt" },
         { "from": "THIRD-PARTY-NOTICES.txt", "to": "THIRD-PARTY-NOTICES.txt" }
       ],
       "binaries": [

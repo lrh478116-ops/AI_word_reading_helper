@@ -40,7 +40,11 @@ assert.doesNotMatch(lockSource, /nanoid@3\.3\.17(?:\b|:)/, "锁文件仍包含�
 
 assert.match(appSource, /https:\/\/lrh478116-ops\.github\.io\/ai-tip-support-site/, "应用仍指向不可用的旧支持站点");
 await access(new URL("../THIRD-PARTY-NOTICES.txt", import.meta.url));
+await access(new URL("../LICENSE", import.meta.url));
 await access(new URL("../runtime/llama.cpp/win-x64/LICENSE", import.meta.url));
+assert.equal(packageJson.license, "MIT", "公开仓库没有声明开源许可证");
+assert.ok(packageJson.build?.win?.extraResources?.some((item) => item.from === "LICENSE"), "Windows 包未包含应用开源许可证");
+assert.ok(packageJson.build?.mac?.extraResources?.some((item) => item.from === "LICENSE"), "macOS 包未包含应用开源许可证");
 assert.ok(packageJson.build?.win?.extraResources?.some((item) => item.from === "THIRD-PARTY-NOTICES.txt"), "Windows 包未包含第三方许可清单");
 assert.ok(packageJson.build?.mac?.extraResources?.some((item) => item.from === "THIRD-PARTY-NOTICES.txt"), "macOS 包未包含第三方许可清单");
 

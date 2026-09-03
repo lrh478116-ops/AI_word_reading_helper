@@ -8,6 +8,6 @@ Run `node scripts/test-release-readiness.mjs` from the repository root after the
 
 ## Publishing
 
-The canonical public origin is `https://lrh478116-ops.github.io/ai-tip-support-site`. Only the contents of this directory are mirrored to the public `lrh478116-ops/ai-tip-support-site` repository; the application source repository remains private. Run `pnpm release:verify:online` after every publication. Apple App Store Connect should receive direct URLs for `/privacy/` and `/account-deletion/`.
+The canonical public origin is `https://lrh478116-ops.github.io/ai-tip-support-site`. The contents of this directory are mirrored to the dedicated public `lrh478116-ops/ai-tip-support-site` repository so the compliance URLs remain stable independently of application releases. Run `pnpm release:verify:online` after every publication. Apple App Store Connect should receive direct URLs for `/privacy/` and `/account-deletion/`.
 
 For distribution in mainland China, replace any filing placeholder only after the real operator, domain and access provider have completed the required ICP/APP filing. Never insert a fabricated filing number.
