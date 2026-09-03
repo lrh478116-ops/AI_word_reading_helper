@@ -16,6 +16,7 @@
 | 第三方许可未形成候选包可见清单 | 高 | `package.json`、`runtime/llama.cpp/win-x64` | 没有根级 notices；Windows llama.cpp 目录缺主 MIT LICENSE | 分发义务不可审计 | 是 |
 | Supabase 泄露密码保护不可用且应用只要求 6 位密码 | 中 | Supabase Auth 免费项目、`server/index.ts`、`src/App.tsx` | Security Advisor 报警；官方文档说明该功能仅 Pro 及以上 | 弱密码风险高于发布建议 | 应用侧修复；Pro 功能保留明确边界 |
 | 商店运营和签名证据尚未产生 | 外部阻断 | App Store Connect、签名证书、SMTP、ICP/APP 备案 | 当前仓库只有模板或 mock/组件测试 | 可能形成虚假“已上架就绪”结论 | 是 |
+| 发布清单固定调用 Windows PowerShell | 高 | `scripts/create-release-manifest.mjs` | 从 PowerShell 7 启动时，子进程继承不兼容的 `PSModulePath`，`Microsoft.PowerShell.Security` 加载失败 | 已生成的候选包无法形成签名与哈希清单，发布证据链中断 | 是 |
 
 ## 设计不变量
 
@@ -27,6 +28,7 @@
 6. 候选包必须由当前提交重新生成；版本、文件哈希、签名状态和测试结果必须写入当轮清单。
 7. 所有 API Key、Supabase secret/service-role key、审核账号密码和 SMTP 密钥都不得进入客户端包或 Git。
 8. Supabase 免费套餐不具备的保护不得被报告为已启用；应用自身注册和重置密码至少要求 8 个字符。
+9. Windows 签名检查必须优先使用可用的 PowerShell 7，并在只存在 Windows PowerShell 时隔离不兼容的 PowerShell Core 模块路径；命令缺失或模块加载失败必须显式报错，不得把“未检查”伪装成“未签名”。
 
 ## 非目标
 
@@ -47,6 +49,7 @@
 6. 7 位注册或重置密码必须失败；已有登录密码不因新策略被静默改写。
 7. 安装包版本与 `package.json` 不一致、产物时间早于 HEAD、产物未通过烟雾测试或未记录签名状态时不得标记为正式候选。
 8. 关闭联网搜索、未点击云上传、删除账户失败、旧 token 复用等既有负向测试必须继续通过。
+9. 发布清单的签名检查必须在当前 Windows 环境真实执行；传入普通未签名文件应明确返回 `NotSigned`，不能因继承的模块路径而崩溃，也不能硬编码为通过。
 
 ## 验收等级和证据边界
 

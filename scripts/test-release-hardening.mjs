@@ -54,4 +54,15 @@ assert.equal(isAcceptableNewPassword("1234567"), false, "7 位密码被错误接
 assert.equal(isAcceptableNewPassword("12345678"), true, "8 位密码被错误拒绝");
 assert.match(mainSource, /isAllowedAppNavigation\(url, allowedOrigin\)/, "主窗口没有真实消费精确导航策略");
 
-console.log(JSON.stringify({ exactNavigationOrigin: true, csp: true, dependencyHighFix: true, noticesPackaged: true, minimumPasswordLength: MIN_PASSWORD_LENGTH, publicSiteConfigured: true }));
+const { getWindowsAuthenticodeStatus } = await import("./windows-authenticode.mjs");
+const unsignedProbe = process.platform === "win32"
+  ? getWindowsAuthenticodeStatus(new URL("../runtime/llama.cpp/win-x64/llama.exe", import.meta.url))
+  : getWindowsAuthenticodeStatus(new URL("../package.json", import.meta.url));
+if (process.platform === "win32") {
+  assert.equal(unsignedProbe.status, "NotSigned", "Windows 签名探针未能在当前 PowerShell 环境检查普通未签名 PE 文件");
+  assert.equal(unsignedProbe.signed, false, "普通未签名 PE 文件被错误报告为有效签名");
+} else {
+  assert.equal(unsignedProbe.status, "NotChecked");
+}
+
+console.log(JSON.stringify({ exactNavigationOrigin: true, csp: true, dependencyHighFix: true, noticesPackaged: true, minimumPasswordLength: MIN_PASSWORD_LENGTH, publicSiteConfigured: true, authenticodeProbe: unsignedProbe.status }));
