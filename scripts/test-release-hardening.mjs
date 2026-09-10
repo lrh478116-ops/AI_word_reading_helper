@@ -33,7 +33,7 @@ assert.ok(!/script-src[^;]*unsafe-inline/i.test(csp), "CSP 对脚本错误放开
 assert.ok(!/script-src[^;]*(?:^|\s)'unsafe-eval'(?:\s|;|$)/i.test(csp), "CSP 对普通 JavaScript 错误放开了 unsafe-eval");
 assert.match(csp, /script-src[^;]*'wasm-unsafe-eval'/i, "离线 OCR/Python 所需的 WebAssembly 编译权限缺失");
 
-assert.equal(packageJson.version, "1.12.11", "发布修复后必须生成新版本，不能覆盖旧 1.12.10 产物");
+assert.equal(packageJson.version, "1.12.12", "云连接修复必须生成新版本，不能覆盖旧安装包");
 assert.equal(packageJson.build?.mac?.minimumSystemVersion, "12.0", "macOS 最低兼容版本没有显式固定");
 assert.match(workspaceSource, /^\s*nanoid:\s*3\.3\.18\s*$/m, "已知 nanoid 高危版本没有被锁定到修复版");
 assert.doesNotMatch(lockSource, /nanoid@3\.3\.17(?:\b|:)/, "锁文件仍包含已知脆弱的 nanoid 3.3.17");

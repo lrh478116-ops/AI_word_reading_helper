@@ -22,7 +22,7 @@ import { PDF_STRUCTURE_VERSION, extractPdfStructure } from "./pdf-structure.js";
 import { PDF_TIP_ANCHOR_VERSION, createAnnotatedPdfCopy, validatePdfTipAnchor } from "./pdf-tip.js";
 import { normalizeLanguage, translate } from "../src/i18n.js";
 import {
-  CLOUD_USER_QUOTA_BYTES, SupabaseRequestError, cloudSourceExists, cloudSourcePath, cloudSourcePaths, deleteCloudDocuments, deleteCloudSource, deleteCloudSources, deleteCloudTips,
+  CLOUD_USER_QUOTA_BYTES, SupabaseRequestError, configureSupabaseNetworkFetch, cloudSourceExists, cloudSourcePath, cloudSourcePaths, deleteCloudDocuments, deleteCloudSource, deleteCloudSources, deleteCloudTips,
   downloadCloudSource, fetchCloudSnapshot, fetchCloudUsage, legacyCloudSourcePath, publicSupabaseUser, supabaseEnabled, supabaseGetUser,
   supabaseDeleteAccount, supabaseRefresh, supabaseRequestPasswordRecovery, supabaseSignIn, supabaseSignUp, supabaseUpdatePassword,
   supabaseVerifyOtp, uploadCloudSource, upsertCloudChanges, type SupabaseSession
@@ -30,6 +30,7 @@ import {
 import { MIN_PASSWORD_LENGTH, isAcceptableNewPassword } from "./password-policy.ts";
 
 export { DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, resolveSystemPrompt } from "../src/prompts.js";
+export { probeCloudConnection } from './supabase.js';
 export { PROVIDER_REGISTRY, migrateProviderPreset } from "../src/providers.js";
 export { LOCAL_MODEL_CATALOG, LOCAL_MODEL_CATALOG_VERIFIED_AT } from "../src/local-models.js";
 export { PDF_STRUCTURE_VERSION, extractPdfStructure } from "./pdf-structure.js";
@@ -64,6 +65,7 @@ let externalNetworkFetch: ExternalNetworkFetch | null = null;
 let externalNetworkUsesTrustedSystemProxy = false;
 export function configureExternalNetworkFetch(fetcher: ExternalNetworkFetch | null, options: { trustedSystemProxy?: boolean } = {}) {
   externalNetworkFetch = fetcher;
+  configureSupabaseNetworkFetch(fetcher);
   externalNetworkUsesTrustedSystemProxy = Boolean(fetcher && options.trustedSystemProxy);
 }
 function fetchExternal(input: string | URL | globalThis.Request, init?: globalThis.RequestInit): Promise<globalThis.Response> {
@@ -437,6 +439,7 @@ async function establishCloudSession(cloudSession: SupabaseSession) {
 function authUpstreamStatus(error: unknown, invalidCredentials = false) {
   if (!(error instanceof SupabaseRequestError)) return 503;
   if (error.status === 502) return 502;
+  if (error.status === 429) return 429;
   if (error.status >= 400 && error.status < 500) return invalidCredentials ? 401 : error.status;
   return 503;
 }
@@ -507,7 +510,7 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(201).json({ token: cloudSession.access_token, refreshToken: cloudSession.refresh_token, user: publicUser(user) });
     } catch (error) {
       const status = authUpstreamStatus(error);
-      return res.status(status).json({ error: error instanceof Error ? error.message : "Supabase 注册失败" });
+      return res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: error instanceof Error ? error.message : "Supabase 注册失败" });
     }
   }
   const db = await readDb();
@@ -528,7 +531,7 @@ app.post("/api/auth/verify-registration", async (req, res) => {
     return res.json({ token: cloudSession.access_token, refreshToken: cloudSession.refresh_token, user: publicUser(user) });
   } catch (error) {
     const status = authUpstreamStatus(error, true);
-    return res.status(status).json({ error: status === 401 ? "验证码无效或已过期" : error instanceof Error ? error.message : "邮箱验证码验证失败" });
+    return res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: status === 401 ? "验证码无效或已过期" : error instanceof Error ? error.message : "邮箱验证码验证失败" });
   }
 });
 
@@ -541,7 +544,7 @@ app.post("/api/auth/password/recover", async (req, res) => {
     return res.status(202).json({ verificationRequired: true });
   } catch (error) {
     const status = authUpstreamStatus(error);
-    return res.status(status).json({ error: error instanceof Error ? error.message : "无法发送密码恢复邮件" });
+    return res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: error instanceof Error ? error.message : "无法发送密码恢复邮件" });
   }
 });
 
@@ -559,7 +562,7 @@ app.post("/api/auth/password/reset", async (req, res) => {
     return res.json({ token: cloudSession.access_token, refreshToken: cloudSession.refresh_token, user: publicUser(user) });
   } catch (error) {
     const status = authUpstreamStatus(error, true);
-    return res.status(status).json({ error: status === 401 ? "验证码无效或已过期" : error instanceof Error ? error.message : "重置密码失败" });
+    return res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: status === 401 ? "验证码无效或已过期" : error instanceof Error ? error.message : "重置密码失败" });
   }
 });
 
@@ -577,7 +580,7 @@ app.post("/api/auth/login", async (req, res) => {
     return res.json({ token: cloudSession.access_token, refreshToken: cloudSession.refresh_token, user: publicUser(cloudUser) });
   } catch (error) {
     const status = authUpstreamStatus(error, true);
-    return res.status(status).json({ error: status === 401 ? "邮箱或密码不正确" : `无法连接 Supabase：${error instanceof Error ? error.message : "云服务不可用"}` });
+    return res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: status === 401 ? "邮箱或密码不正确" : `无法连接 Supabase：${error instanceof Error ? error.message : "云服务不可用"}` });
   }
 });
 
@@ -589,7 +592,7 @@ app.post("/api/auth/refresh", async (req, res) => {
     res.json({ token: cloudSession.access_token, refreshToken: cloudSession.refresh_token, user: publicSupabaseUser(cloudSession.user) });
   } catch (error) {
     const status = authUpstreamStatus(error, true);
-    res.status(status).json({ error: status === 401 ? "云端会话已过期，请重新登录" : `无法刷新 Supabase 会话：${error instanceof Error ? error.message : "云服务不可用"}` });
+    res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: status === 401 ? "云端会话已过期，请重新登录" : `无法刷新 Supabase 会话：${error instanceof Error ? error.message : "云服务不可用"}` });
   }
 });
 

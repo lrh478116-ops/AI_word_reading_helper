@@ -1,7 +1,7 @@
 {
   "name": "ai-tip-document-app",
   "private": true,
-  "version": "1.12.11",
+  "version": "1.12.12",
   "description": "面向深度阅读的本地 AI 文档与 Tip 对话应用",
   "author": "AI Tip",
   "license": "MIT",
@@ -18,6 +18,8 @@
     "desktop:dev": "pnpm desktop:prepare && concurrently -k -n web,desktop -c cyan,green \"vite\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs --dev\"",
     "desktop:start": "pnpm desktop:prepare && electron electron/main.mjs",
     "desktop:smoke": "pnpm desktop:prepare && electron electron/main.mjs --smoke-test",
+    "cloud:network:test": "electron scripts/test-cloud-network-electron.mjs && electron scripts/test-supabase-chromium.mjs",
+    "cloud:connection:test": "electron electron/main.mjs --cloud-connection-test",
     "search:live": "pnpm desktop:prepare && node scripts/test-live-reference-search.mjs",
     "skills:test": "pnpm desktop:prepare && node scripts/test-release-hardening.mjs && node scripts/test-public-repository-safety.mjs && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-pdf-tip-anchors.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-login-credentials.mjs && node scripts/test-managed-ollama-runtime.mjs && node scripts/test-bundled-llama-runtime.mjs && node scripts/test-electron-model-download.mjs && node scripts/test-ollama-installer.mjs && node scripts/test-local-model-integration.mjs && node scripts/test-skills-integration.mjs && node scripts/test-supabase-integration.mjs && node scripts/test-account-deletion-edge.mjs && node scripts/test-release-readiness.mjs && electron scripts/test-cloud-file-client-electron.mjs",
     "repository:safety": "node scripts/test-public-repository-safety.mjs",

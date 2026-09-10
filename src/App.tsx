@@ -7,6 +7,7 @@ import {
   Upload, WandSparkles, X, Zap
 } from "lucide-react";
 import { ApiError, api, session } from "./api";
+import { cloudErrorMessage } from './cloud-errors';
 import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type Language } from "./i18n";
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
@@ -59,7 +60,7 @@ function iconForSource(source: DocumentItem["sourceType"]) {
 type AuthMode = "login" | "register" | "verify-registration" | "recover" | "reset";
 
 function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [mode, setMode] = useState<AuthMode>("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -123,7 +124,7 @@ function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
     } catch (err) {
       if (err instanceof ApiError && err.code === "ACCOUNT_EXISTS") {
         setAccountExists(true); setError(t("auth.accountExists"));
-      } else setError(err instanceof Error ? err.message : t("auth.loginFailed"));
+      } else setError((err instanceof ApiError && cloudErrorMessage(err.code, language)) || (err instanceof Error ? err.message : t("auth.loginFailed")));
     } finally { setLoading(false); }
   };
 

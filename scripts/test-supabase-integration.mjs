@@ -237,7 +237,10 @@ process.env.AI_TIP_ALLOW_INSECURE_SUPABASE = "1";
 process.env.AI_TIP_CLOUD_PULL_TTL_MS = "0";
 delete process.env.OPENAI_API_KEY;
 
-const { startServer } = await import("../dist-electron/server.cjs");
+const { startServer, configureExternalNetworkFetch } = await import("../dist-electron/server.cjs");
+// This protocol fixture explicitly binds its transport; desktop missing-binding
+// rejection and the real Chromium transport are tested separately.
+configureExternalNetworkFetch(process.versions.electron ? (await import('../electron/chromium-net-fetch.mjs')).chromiumNetFetch : globalThis.fetch);
 let appServer = await startServer(0, "127.0.0.1");
 let base = `http://127.0.0.1:${appServer.address().port}/api`;
 

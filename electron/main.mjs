@@ -98,7 +98,8 @@ async function bootServer() {
   pythonWorkerTest = serverModule.runPythonWorker || serverModule.default?.runPythonWorker;
   liveReferenceSearch = serverModule.searchReferenceWeb || serverModule.default?.searchReferenceWeb;
   if (!startServer) throw new Error("本地服务模块加载失败");
-  if (configureExternalNetworkFetch) configureExternalNetworkFetch(chromiumNetFetch, { trustedSystemProxy: true });
+  if (!configureExternalNetworkFetch) throw new Error('桌面网络模块版本不匹配，请重新安装应用');
+  configureExternalNetworkFetch(chromiumNetFetch, { trustedSystemProxy: true });
   if (configureLocalModelRuntime) configureLocalModelRuntime({
     info: () => managedLocalRuntime.info(),
     downloadArtifact: async (request, signal, onProgress) => {
@@ -942,6 +943,22 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (process.argv.includes('--cloud-connection-test')) {
+    smokeDataDir ||= mkdtempSync(path.join(tmpdir(), 'ai-tip-cloud-connection-'));
+    await bootServer();
+    const serverModule = await import(new URL('../dist-electron/server.cjs', import.meta.url));
+    const health = await serverModule.probeCloudConnection();
+    // Invalid OTP input is rejected before Auth creates users or sends any email.
+    const response = await fetch(`${localURL}/api/auth/verify-registration`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'network-probe@example.invalid', code: '000000' })
+    });
+    const body = await response.json();
+    if (response.status !== 401 || body.token) throw new Error(`Cloud auth probe failed: ${response.status} ${body.code || ''}`);
+    const result = { ok: true, evidence: 'FORMAL_PATH_INTEGRATION', networkStack: 'electron-chromium', health, invalidOtpStatus: response.status, emailSent: false };
+    if (smokeResultPath) writeFileSync(smokeResultPath, JSON.stringify(result), 'utf8');
+    console.log(JSON.stringify(result)); app.quit(); return;
+  }
   if (process.argv.includes("--live-reference-search-test")) {
     process.env.AI_TIP_SUPABASE_ENABLED = "0";
     smokeDataDir ||= mkdtempSync(path.join(tmpdir(), "ai-tip-live-reference-electron-"));

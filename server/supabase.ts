@@ -1,6 +1,7 @@
 import type { CloudUsage, DocumentItem, TipThread, User } from "../src/types.js";
 import { promisify } from "node:util";
 import { gzip, gunzip, constants as zlibConstants } from "node:zlib";
+import { cloudErrorMessage } from '../src/cloud-errors.js';
 
 const DEFAULT_SUPABASE_URL = "https://kaqonqxygajosgddhmaq.supabase.co";
 const DEFAULT_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_L7ahQAOHGZ3qa1isqPqphQ_35-EzgIa";
@@ -40,7 +41,33 @@ interface CloudDocumentRow { id: string; user_id: string; payload: DocumentItem;
 interface CloudTipRow { id: string; user_id: string; document_id: string; payload: TipThread; updated_at: string }
 
 export class SupabaseRequestError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+  constructor(message: string, readonly status: number, readonly code = '') { super(message); }
+}
+
+type CloudFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+let cloudFetch: CloudFetch | null = null;
+export function configureSupabaseNetworkFetch(fetcher: CloudFetch | null) { cloudFetch = fetcher; }
+
+function cloudFailure(code: string, status = 503) {
+  return new SupabaseRequestError(cloudErrorMessage(code) || '云连接失败', status, code);
+}
+
+function networkFailure(error: unknown): SupabaseRequestError {
+  if (error instanceof SupabaseRequestError) return error;
+  const parts: string[] = [];
+  let current = error;
+  for (let depth = 0; current && depth < 4; depth++) {
+    const value = current as { name?: string; code?: string; message?: string; cause?: unknown };
+    parts.push(String(value.name || ''), String(value.code || ''), String(value.message || ''));
+    current = value.cause;
+  }
+  // Raw errors can contain credentials or URLs. Only this fixed code leaves the boundary.
+  const detail = parts.join(' ').toUpperCase();
+  if (/ENOTFOUND|EAI_AGAIN|ERR_NAME_NOT_RESOLVED|ERR_DNS/.test(detail)) return cloudFailure('CLOUD_DNS_FAILED');
+  if (/CERT|TLS|SSL/.test(detail)) return cloudFailure('CLOUD_TLS_FAILED');
+  if (/TIMEOUT|TIMED_OUT|ETIMEDOUT|ABORTERROR/.test(detail)) return cloudFailure('CLOUD_TIMEOUT');
+  if (/ECONNRESET|ERR_CONNECTION_CLOSED|ERR_CONNECTION_RESET/.test(detail)) return cloudFailure('CLOUD_CONNECTION_CLOSED');
+  return cloudFailure('CLOUD_NETWORK_FAILED');
 }
 
 function configuration() {
@@ -65,9 +92,28 @@ async function request(path: string, init: RequestInit = {}, token = "", timeout
   headers.set("apikey", config.publishableKey);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const target = /^https?:\/\//i.test(path) ? path : `${config.url}${path}`;
-  const response = await fetch(target, { ...init, headers, signal: AbortSignal.timeout(timeoutMs) });
+  const parsedTarget = new URL(target);
+  if (parsedTarget.username || parsedTarget.password || ![new URL(config.url).origin, new URL(config.storageUrl).origin].includes(parsedTarget.origin)) {
+    throw cloudFailure('CLOUD_REDIRECT_BLOCKED', 502);
+  }
+  if (!cloudFetch && process.env.AI_TIP_DESKTOP === '1') throw cloudFailure('CLOUD_TRANSPORT_UNAVAILABLE');
+  let response: Response;
+  try {
+    response = await (cloudFetch || globalThis.fetch)(target, {
+      ...init, headers, redirect: 'manual', cache: 'no-store',
+      signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+    });
+  } catch (error) { throw networkFailure(error); }
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel();
+    throw cloudFailure('CLOUD_REDIRECT_BLOCKED', 502);
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { message?: string; msg?: string; error_description?: string; error?: string };
+    if (response.status === 429 || response.status >= 500) {
+      const code = response.status === 429 ? 'CLOUD_RATE_LIMITED' : 'CLOUD_SERVICE_UNAVAILABLE';
+      throw new SupabaseRequestError(body.message || cloudErrorMessage(code)!, response.status === 429 ? 429 : 503, code);
+    }
     throw new SupabaseRequestError(body.message || body.msg || body.error_description || body.error || `Supabase 返回 ${response.status}`, response.status);
   }
   return response;
@@ -94,7 +140,15 @@ function sessionFromPayload(value: unknown, operation: string): SupabaseSession 
 
 async function authPayload(path: string, body: Record<string, unknown>) {
   const response = await request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  return await response.json() as unknown;
+  try { return await response.json() as unknown; }
+  catch (error) { throw error instanceof SyntaxError ? cloudFailure('CLOUD_RESPONSE_INVALID', 502) : networkFailure(error); }
+}
+
+export async function probeCloudConnection() {
+  const response = await request('/auth/v1/health', {}, '', 12_000);
+  const value = await response.json().catch(() => null) as { name?: string; version?: string } | null;
+  if (value?.name !== 'GoTrue') throw cloudFailure('CLOUD_RESPONSE_INVALID', 502);
+  return { available: true, service: value.name, version: value.version || '' };
 }
 
 export async function supabaseSignUp(name: string, email: string, password: string): Promise<SupabaseSignUpResult> {
