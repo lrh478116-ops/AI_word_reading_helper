@@ -38,3 +38,16 @@
 - 未修改系统代理、网卡、DNS、hosts 或 TLS 验证。等待网络环境切换后的生产复测；在取得真实成功证据前标记 NOT_CAUSALLY_VERIFIED，不将协议测试当作生产注册通过。
 - Supabase 官方 free-project-pausing 文档确认 Free 低活动可能自动暂停，付费项目不因闲置暂停。此次暂停的具体触发者没有事件日志，不武断归因。免费版未来不暂停无法靠本次代码修复保证。
 - `pnpm skills:test` 全量通过；最终新增的连接中断分类回归也通过。新版本 1.12.12。测试日志中模拟的 503 是负向案例，不能当作真实项目故障。
+
+## 2026-09-11 最终产物与真实连接复测
+
+这一节是上述“等待复测”之后的新证据，不删除之前失败的记录。
+
+- 生产项目仍为 ACTIVE_HEALTHY；恢复后真实只读 SQL 已确认 ai_documents 与 ai_tips 表存在。
+- 当前系统代理仍 DIRECT，Chromium 包装、Chromium 原生 Fetch、Node Fetch 对真实 `/auth/v1/health` 都返回 HTTP 200，服务为 GoTrue v2.196.0。未改动本机代理、网卡或 DNS；因此此前 Meta Tunnel 的存在只能作为网络环境事实，不能判定为已证实的充分根因。此前连接关闭的精确归因未获得证据。
+- Windows 1.12.12 由代码提交 `a6458be857d93ea830403284c1b4c31ca746a804` 构建。发布清单记录构建时源码干净。此节为后续文档验证提交，不把文档提交冒称为二进制构建源码。
+- 安装包 `AI Tip Setup 1.12.12.exe`：204394459 bytes，SHA-256 `2ec556d86136a5714c91985c7d2db3a2f7b77ea6c1f99f12ad902a801eb19cd6`；Windows 签名仍为 NotSigned。
+- 打包 EXE `--smoke-test` 退出码 0，PDF/OCR、递归 Tip、文档编辑保存、联网开关、凭据安全存储、Python Decimal 均通过。
+- 同一打包 EXE `--cloud-connection-test` 退出码 0：正式 bootServer 注入 Chromium → 真实 Auth health 成功 → 本机正式 `/api/auth/verify-registration` → 真实 Supabase 拒绝无效验证码 → 本机 HTTP 401，无 token、无注册、无发信。证明云连接和负向认证在正式打包路径达到 FORMAL_PATH_INTEGRATION；不证明实际邮箱收信或真实用户注册成功。
+- 对应本机原始证据：`release/release-manifest.json`、`release/packaged-smoke-1.12.12.json`、`release/cloud-connection-1.12.12.json`。
+- 真实邮箱验证码接收、正确码建立会话仍为 NOT_CAUSALLY_VERIFIED；免费套餐不因闲置暂停的保证仍然不存在。SMTP 已知配置边界见 `docs/supabase-email-otp.md`。
