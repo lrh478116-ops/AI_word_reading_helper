@@ -109,12 +109,13 @@ async function request(path: string, init: RequestInit = {}, token = "", timeout
     throw cloudFailure('CLOUD_REDIRECT_BLOCKED', 502);
   }
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { message?: string; msg?: string; error_description?: string; error?: string };
+    const body = await response.json().catch(() => ({})) as { message?: string; msg?: string; error_description?: string; error?: string; code?: string };
     if (response.status === 429 || response.status >= 500) {
-      const code = response.status === 429 ? 'CLOUD_RATE_LIMITED' : 'CLOUD_SERVICE_UNAVAILABLE';
+      const code = body.code === 'over_email_send_rate_limit' ? body.code : response.status === 429 ? 'CLOUD_RATE_LIMITED' : 'CLOUD_SERVICE_UNAVAILABLE';
       throw new SupabaseRequestError(body.message || cloudErrorMessage(code)!, response.status === 429 ? 429 : 503, code);
     }
-    throw new SupabaseRequestError(body.message || body.msg || body.error_description || body.error || `Supabase 返回 ${response.status}`, response.status);
+    const code = typeof body.code === 'string' && cloudErrorMessage(body.code) ? body.code : path.startsWith('/auth/v1/') ? 'AUTH_REQUEST_FAILED' : '';
+    throw new SupabaseRequestError(body.message || body.msg || body.error_description || body.error || `Supabase 返回 ${response.status}`, response.status, code);
   }
   return response;
 }

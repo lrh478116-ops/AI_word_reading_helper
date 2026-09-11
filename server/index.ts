@@ -487,7 +487,7 @@ async function auth(req: AuthedRequest, res: Response, next: NextFunction) {
     next();
   } catch (error) {
     const status = error instanceof SupabaseRequestError && error.status === 401 ? 401 : 503;
-    res.status(status).json({ error: status === 401 ? "云端登录状态已失效，请重新登录" : `无法连接 Supabase：${error instanceof Error ? error.message : "云服务不可用"}` });
+    res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: status === 401 ? "云端登录状态已失效，请重新登录" : `无法连接 Supabase：${error instanceof Error ? error.message : "云服务不可用"}` });
   }
 }
 
@@ -624,7 +624,7 @@ app.delete("/api/auth/account", auth, async (req: AuthedRequest, res) => {
       return res.json({ deleted: true, localDataCleared: true, storageObjectsDeleted: remote.storageObjectsDeleted, documentsDeleted: local.documentsDeleted });
     } catch (error) {
       const status = error instanceof SupabaseRequestError ? Math.max(400, Math.min(599, error.status)) : 503;
-      return res.status(status).json({ error: error instanceof Error ? error.message : "账户删除失败" });
+      return res.status(status).json({ code: error instanceof SupabaseRequestError ? error.code : '', error: error instanceof Error ? error.message : "账户删除失败" });
     }
   }
   try {
@@ -2865,8 +2865,8 @@ if (existsSync(distDir)) {
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   console.error(error);
   if (error instanceof SupabaseRequestError) {
-    const status = error.status === 401 ? 401 : error.status === 413 ? 413 : error.status === 429 || error.status >= 500 ? 503 : 502;
-    return res.status(status).json({ error: `Supabase 云端操作失败：${error.message}` });
+    const status = error.status === 401 ? 401 : error.status === 413 ? 413 : error.status === 429 ? 429 : error.status >= 500 ? 503 : 502;
+    return res.status(status).json({ code: error.code, error: `Supabase 云端操作失败：${error.message}` });
   }
   res.status(500).json({ error: "服务暂时不可用" });
 });

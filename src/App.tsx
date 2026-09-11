@@ -167,7 +167,7 @@ function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
           {mode === "login" && !credentialStorageAvailable && <p className="auth-security-note">{t("auth.secureStorageUnavailable")}</p>}
           {(mode === "login" || (mode === "register" && accountExists)) && <button type="button" className="auth-inline-action" onClick={() => changeMode("recover")}>{t("auth.forgot")}</button>}
           {notice && <div className="form-success"><CheckCircle2 size={16} />{notice}</div>}
-          {error && <div className="form-error"><CircleHelp size={16} />{error}</div>}
+          {error && <div className="form-error" role="alert"><CircleHelp size={16} /><span>{error}</span></div>}
           <button className="primary auth-submit" disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : null}{action}</button>
           {primaryModes ? <><div className="divider"><span>{t("auth.or")}</span></div><button type="button" className="secondary demo-button" onClick={demo} disabled={loading}><Zap size={17} />{t("auth.localUse")}</button><p className="auth-switch">{mode === "login" ? t("auth.noAccount") : t("auth.hasAccount")}<button type="button" onClick={() => changeMode(mode === "login" ? "register" : "login")}>{mode === "login" ? t("auth.freeRegister") : t("auth.backLogin")}</button></p></> : <p className="auth-switch"><button type="button" onClick={() => changeMode("login")}>{t("auth.back")}</button></p>}
         </form>

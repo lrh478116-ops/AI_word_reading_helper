@@ -1,6 +1,8 @@
 import type { AiRuntimeStatus, AiSettings, AiSettingsInput, CloudUsage, DocumentBlock, DocumentItem, PdfPageSource, PdfTipAnchor, SkillTrace, TipThread, User } from "./types";
 import type { PromptLanguage } from "./prompts";
 import type { LocalModelCatalogItem, OllamaRuntimeInfo } from "./local-models";
+import { cloudErrorMessage } from './cloud-errors';
+import { LANGUAGE_STORAGE_KEY, normalizeLanguage } from './i18n';
 
 const TOKEN_KEY = "ai-tip-token";
 const REFRESH_TOKEN_KEY = "ai-tip-refresh-token";
@@ -14,7 +16,9 @@ export interface AuthResult {
 }
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly code = "") { super(message); }
+  constructor(message: string, readonly status: number, readonly code = "") {
+    super(cloudErrorMessage(code, normalizeLanguage(localStorage.getItem(LANGUAGE_STORAGE_KEY))) || message);
+  }
 }
 
 let refreshPromise: Promise<string> | null = null;
@@ -33,8 +37,8 @@ async function refreshCloudToken() {
   if (!refreshPromise) {
     refreshPromise = fetch("/api/auth/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refreshToken }) })
       .then(async (response) => {
-        const body = await response.json().catch(() => ({})) as AuthResult & { error?: string };
-        if (!response.ok || !body.token) throw new Error(body.error || "云端会话已过期，请重新登录");
+        const body = await response.json().catch(() => ({})) as AuthResult & { error?: string; code?: string };
+        if (!response.ok || !body.token) throw new ApiError(body.error || "云端会话已过期，请重新登录", response.status, body.code || '');
         session.set(body.token, body.refreshToken || refreshToken);
         return body.token;
       })
@@ -76,7 +80,12 @@ async function authorizedFetch(path: string, init: RequestInit = {}, retry = tru
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
-  const response = await authorizedFetch(`/api${path}`, { ...init, headers });
+  let response: Response;
+  try { response = await authorizedFetch(`/api${path}`, { ...init, headers }); }
+  catch (error) {
+    if (error instanceof TypeError) throw new ApiError('', 503, 'LOCAL_SERVICE_UNAVAILABLE');
+    throw error;
+  }
   if (response.status === 401) session.clear();
   const body = await response.json().catch(() => ({})) as { error?: string; code?: string };
   if (!response.ok) throw new ApiError(body.error || "请求失败，请稍后重试", response.status, body.code || "");

@@ -1,4 +1,4 @@
-import { app, session } from 'electron';
+import { app, session, BrowserWindow } from 'electron';
 import { strict as assert } from 'node:assert';
 import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -7,6 +7,7 @@ import path from 'node:path';
 import { chromiumNetFetch } from '../electron/chromium-net-fetch.mjs';
 
 async function main() {
+app.on('window-all-closed', () => {});
 const temp = await mkdtemp(path.join(os.tmpdir(), 'ai-tip-cloud-network-'));
 app.setPath('userData', temp);
 const requests = [];
@@ -26,7 +27,7 @@ const upstream = createServer(async (req, res) => {
   }
   res.end(JSON.stringify({ raw: raw.toString('base64'), method: req.method }));
 });
-let localServer;
+let localServer, window;
 try {
   await app.whenReady();
   await session.defaultSession.setProxy({ mode: 'direct' });
@@ -90,14 +91,60 @@ try {
   bind(async () => new Response(JSON.stringify({ message: 'rate limited', code: 'over_request_rate_limit' }), { status: 429 }));
   const limited = await call('login', { email: 'fixture@example.test', password: 'fixture-password' });
   assert.equal(limited.status, 429); assert.equal(limited.body.code, 'CLOUD_RATE_LIMITED');
+  for (const [route, code, status, value] of [
+    ['login', 'email_not_confirmed', 400, JSON.parse(body)],
+    ['login', 'invalid_credentials', 400, JSON.parse(body)],
+    ['register', 'email_address_not_authorized', 400, JSON.parse(body)],
+    ['verify-registration', 'otp_expired', 403, { email: 'fixture@example.test', code: '123456' }],
+    ['password/recover', 'over_email_send_rate_limit', 429, { email: 'fixture@example.test' }],
+  ]) {
+    bind(async () => new Response(JSON.stringify({ message: 'opaque upstream error', code }), { status }));
+    const failedAuth = await call(route, value);
+    assert.equal(failedAuth.body.code, code, `Formal ${route} discarded actionable Auth code`);
+    assert.equal(failedAuth.body.token, undefined);
+  }
+  // Exercise the shipped React form -> local API -> injected upstream -> ApiError -> alert.
+  // These are controlled failures, not an independent production email evaluation.
+  bind(async () => new Response('unavailable', { status: 503 }));
+  window = new BrowserWindow({ show: false, width: 1100, height: 900, webPreferences: { contextIsolation: true, nodeIntegration: false } });
+  await window.loadURL(base);
+  const js = source => window.webContents.executeJavaScript(source);
+  const waitFor = async expression => {
+    for (let i = 0; i < 100; i++) {
+      if (await js(expression)) return;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    throw new Error(`UI condition timed out: ${expression}`);
+  };
+  await waitFor('!!document.querySelector(".auth-submit")');
+  await js(`for (const [selector, value] of [['input[type=email]', 'fixture@example.test'], ['input[type=password]', 'fixture-password']]) {
+    const input = document.querySelector(selector);
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }`);
+  await js('document.querySelector(".auth-submit").click()');
+  await waitFor('document.querySelector(".form-error")?.textContent.includes("原因说明：")');
+  assert.match(await js('document.querySelector(".form-error").textContent'), /云端服务暂时不可用[\s\S]*原因说明：[\s\S]*处理方法：/);
+  assert.equal(await js('getComputedStyle(document.querySelector(".form-error")).whiteSpace'), 'pre-line');
+  assert.equal(await js('document.querySelector("input[type=email]").value'), 'fixture@example.test', 'Error cleared user input');
+  await js(`const select = document.querySelector('.auth-language select'); select.value = 'en'; select.dispatchEvent(new Event('change', { bubbles: true }));`);
+  // Counterfactual: changing the upstream error must change the visible explanation.
+  bind(async () => new Response(JSON.stringify({ message: 'opaque upstream error', code: 'email_not_confirmed' }), { status: 400 }));
+  await js('document.querySelector(".auth-submit").click()');
+  await waitFor('document.querySelector(".form-error")?.textContent.includes("Reason:")');
+  const english = await js('document.querySelector(".form-error").textContent');
+  assert.match(english, /email[\s\S]*Reason:[\s\S]*What to do:/i);
+  assert.doesNotMatch(english, /[\u3400-\u9fff]|temporarily unavailable|opaque upstream error/);
+  window.destroy(); window = undefined;
   bind(async () => new Response(null, { status: 307, headers: { location: 'https://evil.example/collect' } }));
   assert.equal((await call('register')).body.code, 'CLOUD_REDIRECT_BLOCKED');
   const db = JSON.parse(await readFile(path.join(temp, 'data', 'store.json'), 'utf8'));
   assert.equal(db.users.filter(u => u.authMode === 'supabase').length, 0, 'Failed/pending registration persisted a cloud identity');
   globalThis.fetch = nativeFetch;
-  console.log(JSON.stringify({ evidence: 'COMPONENT_CAPABILITY', jsonBodyReceived: true, binaryBodyReceived: true, nullBodyStatuses: true, abort: true, redirectBlocked: true, formalApiUsesChromium: true, nodeBypassPoisoned: true, missingBindingBlocked: true, localIsolation: true, noAuthRetry: true, classifiedErrors: true }));
+  console.log(JSON.stringify({ evidence: 'FORMAL_PATH_INTEGRATION', evaluation: 'controlled upstream; not production email delivery', jsonBodyReceived: true, binaryBodyReceived: true, nullBodyStatuses: true, abort: true, redirectBlocked: true, formalApiUsesChromium: true, nodeBypassPoisoned: true, missingBindingBlocked: true, localIsolation: true, noAuthRetry: true, classifiedErrors: true, bilingualRenderedCauseAndAction: true, upstreamErrorChangesVisibleReason: true }));
 } catch (error) { console.error(error); process.exitCode = 1; }
 finally {
+  window?.destroy();
   localServer?.closeAllConnections(); if (localServer) await new Promise(r => localServer.close(r));
   upstream.closeAllConnections(); await new Promise(r => upstream.close(r));
   // This directory was created by mkdtemp for this test only.
