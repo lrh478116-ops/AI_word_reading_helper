@@ -11,5 +11,9 @@ for (const code of codes) {
 assert.match(cloudErrorMessage('CLOUD_SERVICE_UNAVAILABLE'), /可能/);
 assert.doesNotMatch(cloudErrorMessage('CLOUD_SERVICE_UNAVAILABLE'), /服务器已经暂停|服务器已暂停/);
 assert.match(cloudErrorMessage('email_address_not_authorized'), /开发者/);
+for (const language of ['zh-CN', 'en']) {
+  assert.match(cloudErrorMessage('CLOUD_SERVICE_UNAVAILABLE', language), /2280810215@qq\.com/, 'Contact support must display the public email');
+  assert.match(cloudErrorMessage('email_address_not_authorized', language), /2280810215@qq\.com/);
+}
 assert.equal(cloudErrorMessage('unrecognized-code'), undefined);
 console.log(JSON.stringify({ evidence: 'COMPONENT_CAPABILITY', causeAndAction: true, bilingual: true, noInventedDiagnosis: true }));

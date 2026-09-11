@@ -68,7 +68,10 @@ const messages: Record<string, [Explanation, Explanation]> = {
 export function cloudErrorMessage(code: string, language: string = 'zh-CN') {
   const value = messages[code]?.[language === 'en' ? 1 : 0];
   if (!value) return undefined;
+  const action = value[2].replace(/联系开发者|contact support/gi, label => language === 'en'
+    ? `${label} (2280810215@qq.com)`
+    : `${label}（2280810215@qq.com）`);
   return language === 'en'
-    ? `${value[0]}\nReason: ${value[1]}\nWhat to do: ${value[2]}`
-    : `${value[0]}\n原因说明：${value[1]}\n处理方法：${value[2]}`;
+    ? `${value[0]}\nReason: ${value[1]}\nWhat to do: ${action}`
+    : `${value[0]}\n原因说明：${value[1]}\n处理方法：${action}`;
 }

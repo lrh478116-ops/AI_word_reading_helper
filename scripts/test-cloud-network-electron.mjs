@@ -125,6 +125,7 @@ try {
   await js('document.querySelector(".auth-submit").click()');
   await waitFor('document.querySelector(".form-error")?.textContent.includes("原因说明：")');
   assert.match(await js('document.querySelector(".form-error").textContent'), /云端服务暂时不可用[\s\S]*原因说明：[\s\S]*处理方法：/);
+  assert.match(await js('document.querySelector(".form-error").textContent'), /联系开发者（2280810215@qq\.com）/);
   assert.equal(await js('getComputedStyle(document.querySelector(".form-error")).whiteSpace'), 'pre-line');
   assert.equal(await js('document.querySelector("input[type=email]").value'), 'fixture@example.test', 'Error cleared user input');
   await js(`const select = document.querySelector('.auth-language select'); select.value = 'en'; select.dispatchEvent(new Event('change', { bubbles: true }));`);

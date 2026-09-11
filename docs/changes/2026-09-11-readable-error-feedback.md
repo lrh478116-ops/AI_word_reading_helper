@@ -13,6 +13,10 @@
 
 ## 本轮验证（1.12.13）
 
+用户补充：所有本轮错误说明中建议“联系开发者”的位置必须直接显示公开联系邮箱 2280810215@qq.com，英文同样显示；不需要用户去其他页面寻找。先增加失败断言，再统一格式化联系方式；不改邮件发送或账户流程。
+
+邮箱补充验证：修改前断言 `Contact support must display the public email` 失败；修改后 `pnpm errors:test` 通过，并在实际 React 错误区域断言完整邮箱显示。重新构建与类型检查通过。
+
 - 修复前 `node scripts/test-readable-errors.mjs` 失败于 `Missing understandable cause/action: CLOUD_DNS_FAILED`，修复后通过。证据类型：COMPONENT_CAPABILITY。
 - `pnpm cloud:network:test` 通过。真实构建的 React 登录表单 → 本地 API → 受控上游错误 → 保留 Auth code → ApiError 本地化 → 可见 alert。把上游 503 改为邮箱未确认后，可见原因随之改变；中文/英文、原因/处理方法、输入保留与换行样式均断言通过。受控正式路径达到 LEVEL_5_PREDICTION_BEARING；属于 FORMAL_PATH_INTEGRATION，不属于真实生产邮件投递的 INDEPENDENT_EVALUATION。
 - 注册、登录、验证码确认、密码找回的官方错误码保留断言通过；缺少网络绑定、错误重定向、连接失败不得创建账户或自动重放请求的负向检查通过。
