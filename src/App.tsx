@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { ApiError, api, session } from "./api";
 import { cloudErrorMessage } from './cloud-errors';
+import { TipProgress } from './TipProgress';
+import type { TipStage } from './tip-progress';
 import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type Language } from "./i18n";
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
@@ -928,7 +930,7 @@ function TipTreeDialog({ tips, activeId, onClose, onNavigate, onRename }: { tips
 }
 
 function SkillResults({ skills }: { skills?: SkillTrace[] }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   if (!skills?.length) return null;
   const warnings = skills.filter((skill) => skill.status === "warning" || skill.status === "error").length;
   return <details className="skill-results" data-skill-results>
@@ -936,12 +938,13 @@ function SkillResults({ skills }: { skills?: SkillTrace[] }) {
     <div className="skill-results-body">{skills.map((skill, index) => <div className={`skill-result ${skill.name} ${skill.status || "success"}`} key={`${skill.name}-${index}`}>
       <span>{["web_search", "web_fetch", "cross_check", "conflict_check", "freshness_check", "manual_lookup"].includes(skill.name) ? <Globe2 size={12} /> : ["python", "unit_check", "uncertainty", "symbolic_math", "data_analysis"].includes(skill.name) ? <Calculator size={12} /> : <ShieldCheck size={12} />}{skill.label}</span><small>{skill.detail}</small>
       {skill.sources?.length ? <div className="skill-sources">{skill.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}</div> : null}
+      {skill.retrieval?.chunks.length ? <details className="retrieval-extracts"><summary>{language === 'en' ? 'Document extracts used in this answer' : '本次回答使用的文档片段'}</summary>{skill.retrieval.chunks.map((chunk, index) => <div key={chunk.id}><small>[D{index + 1}] {chunk.page ? (language === 'en' ? `Page ${chunk.page}` : `第 ${chunk.page} 页`) : (language === 'en' ? 'Text block' : '文本块')} · {chunk.id}</small><blockquote>{chunk.text}</blockquote></div>)}</details> : null}
     </div>)}</div>
   </details>;
 }
 
-interface TipPanelProps { tip: TipThread; childTips: TipThread[]; modelStatus: AiRuntimeStatus | null; webSearchEnabled: boolean | null; webSearchBusy: boolean; streamingText: string; streamingSkills: SkillTrace[]; isStreaming: boolean; error: string; contextMode?: boolean; onSend: (question: string) => void; onStop: () => void; onToggleWebSearch: () => void; onCollapse: () => void; onFocus?: () => void; onResolve: () => void; onDelete: () => void; onToggleMemory: () => void; onMessageSelection: (selection: ChatSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; onOpenSettings: () => void; onOpenLocalModels: () => void; }
-function TipPanel({ tip, childTips, modelStatus, webSearchEnabled, webSearchBusy, streamingText, streamingSkills, isStreaming, error, contextMode = false, onSend, onStop, onToggleWebSearch, onCollapse, onFocus, onResolve, onDelete, onToggleMemory, onMessageSelection, onOpenTip, onOpenSettings, onOpenLocalModels }: TipPanelProps) {
+interface TipPanelProps { progressStage: TipStage; tip: TipThread; childTips: TipThread[]; modelStatus: AiRuntimeStatus | null; webSearchEnabled: boolean | null; webSearchBusy: boolean; streamingText: string; streamingSkills: SkillTrace[]; isStreaming: boolean; error: string; contextMode?: boolean; onSend: (question: string) => void; onStop: () => void; onToggleWebSearch: () => void; onCollapse: () => void; onFocus?: () => void; onResolve: () => void; onDelete: () => void; onToggleMemory: () => void; onMessageSelection: (selection: ChatSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; onOpenSettings: () => void; onOpenLocalModels: () => void; }
+function TipPanel({ progressStage, tip, childTips, modelStatus, webSearchEnabled, webSearchBusy, streamingText, streamingSkills, isStreaming, error, contextMode = false, onSend, onStop, onToggleWebSearch, onCollapse, onFocus, onResolve, onDelete, onToggleMemory, onMessageSelection, onOpenTip, onOpenSettings, onOpenLocalModels }: TipPanelProps) {
   const { language, t } = useI18n();
   const [question, setQuestion] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -971,7 +974,7 @@ function TipPanel({ tip, childTips, modelStatus, webSearchEnabled, webSearchBusy
       <div ref={messageListRef} className="message-list">
         {tip.messages.length === 0 && !streamingText && modelReady && <div className="tip-welcome"><div><WandSparkles size={20} /></div><h3>{t("tip.start")}</h3><p>{t("tip.welcome")}</p><div className="tip-prompts">{prompts.map(([key, prompt]) => <button key={key} onClick={() => onSend(prompt)}>{t(key)}</button>)}</div></div>}
         {tip.messages.map((message) => <div className={`message ${message.role}`} key={message.id} data-message-id={message.id}>{message.role === "assistant" && <span className="assistant-mark"><Sparkles size={13} /></span>}<div>{message.role === "assistant" && <SkillResults skills={message.skills} />}<MessageContent tip={tip} message={message} childTips={childTips} onSelection={onMessageSelection} onOpenTip={onOpenTip} />{message.role === "assistant" && <button className="copy-message" onClick={() => void navigator.clipboard.writeText(message.content)}><Copy size={13} />{t("common.copy")}</button>}</div></div>)}
-        {isStreaming && <div className="message assistant"><span className="assistant-mark"><Sparkles size={13} /></span><div><SkillResults skills={streamingSkills} />{streamingText ? renderMessage(streamingText) : streamingSkills.length ? <span className="tool-thinking">{t("tip.checkingTools")}</span> : <span className="thinking"><i /><i /><i /></span>}<span className="cursor" /></div></div>}
+        {isStreaming && <div className="message assistant"><span className="assistant-mark"><Sparkles size={13} /></span><div><SkillResults skills={streamingSkills} /><TipProgress stage={progressStage} language={language} />{streamingText ? renderMessage(streamingText) : streamingSkills.length ? <span className="tool-thinking">{t("tip.checkingTools")}</span> : <span className="thinking"><i /><i /><i /></span>}<span className="cursor" /></div></div>}
         {error && <div className="chat-error"><CircleHelp size={15} />{error}</div>}
         {!modelReady && <div className="tip-model-required" data-model-required={modelStatus?.reason || "checking"}><div>{modelStatus ? <Cpu size={20} /> : <LoaderCircle className="spin" size={20} />}</div><h3>{modelStatus ? t("tip.modelRequiredTitle") : t("tip.modelChecking")}</h3><p>{modelStatus?.reason === "ollama-unreachable" || modelStatus?.reason === "invalid-local-endpoint" ? t("tip.ollamaUnavailable") : modelStatus?.reason === "model-not-installed" ? t("tip.localModelMissing") : modelStatus ? t("tip.modelRequired") : t("tip.modelCheckingHint")}</p>{modelStatus && <div><button className="secondary compact" onClick={onOpenSettings}><Settings size={14} />{t("tip.configureApi")}</button><button className="primary compact" onClick={onOpenLocalModels}><Download size={14} />{t("tip.downloadLocal")}</button></div>}</div>}
         <div />
@@ -996,13 +999,14 @@ function SaveIndicator({ state }: { state: SaveState }) {
 interface EditorProps { id: string; cloudEnabled: boolean; settingsRevision: number; onBack: () => void; onSettings: () => void; onOpenLocalModels: () => void; onRegisterSave: (save: (() => Promise<void>) | null) => void; }
 function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, onOpenLocalModels, onRegisterSave }: EditorProps) {
   const { language, t } = useI18n();
+  const [preparation, setPreparation] = useState('');
   const [documentItem, setDocumentItem] = useState<DocumentItem | null>(null);
   const [tips, setTips] = useState<TipThread[]>([]);
   const [activeTipId, setActiveTipId] = useState<string | null>(null);
   const [selection, setSelection] = useState<SelectionInfo | PdfSelectionInfo | ChatSelectionInfo | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [error, setError] = useState("");
-  const [streamingText, setStreamingText] = useState("");
+  const [progressStage, setProgressStage] = useState<TipStage>("preparing"); const [streamingText, setStreamingText] = useState("");
   const [streamingSkills, setStreamingSkills] = useState<SkillTrace[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingTipId, setStreamingTipId] = useState<string | null>(null);
@@ -1026,6 +1030,21 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
     catch (err) { setError(err instanceof Error ? err.message : t("editor.loadFailed")); }
   }, [id, t]);
   useEffect(() => { void load(); return () => controller.current?.abort(); }, [load]);
+  useEffect(() => {
+    if (documentItem?.id !== id) return;
+    const ctrl = new AbortController();
+    setPreparation(language === 'en' ? 'Preparing local document and Tip tools…' : '正在本地预处理文档与预加载 Tip 工具…');
+    const timer = window.setTimeout(() => {
+      void api.prepareDocument(id, ctrl.signal).then(result => {
+        if (ctrl.signal.aborted) return;
+        setPreparation(result.needsOcr
+          ? (language === 'en' ? 'Scanned pages need OCR before text retrieval.' : '扫描页需先识别文字，才能检索正文。')
+          : (result.enabled ? (language === 'en' ? `Local RAG ready · ${result.chunks} chunks` : `本地 RAG 就绪 · ${result.chunks} 个分块`) : (language === 'en' ? 'Document context ready' : '文档上下文已就绪'))
+            + (result.python.error ? (language === 'en' ? ' · Tool preload failed: ' : ' · 工具预加载失败：') + result.python.error : result.python.ready ? (language === 'en' ? ' · Calculation tools preloaded' : ' · 计算工具已预加载') : ''));
+      }).catch(err => { if (!ctrl.signal.aborted) setPreparation((language === 'en' ? 'Local preparation failed: ' : '本地预处理失败：') + err.message); });
+    }, 300);
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [id, documentItem?.id, documentItem?.updatedAt, settingsRevision, language]);
   const refreshModelStatus = useCallback(async () => {
     try { setModelStatus((await api.aiStatus()).status); }
     catch { setModelStatus({ configured: false, provider: "openai", model: "", reason: "no-api-key", local: false }); }
@@ -1162,16 +1181,19 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   const openTip = (tip: TipThread) => { if (isStreaming && streamingTipId !== tip.id) controller.current?.abort(); setActiveTipId(tip.id); setSelection(null); setChatError(""); setChatErrorTipId(null); if (tip.status === "collapsed") void patchTip(tip.id, { status: "open" }); };
   const send = async (tipId: string, question: string) => {
     if (isStreaming || !modelStatus?.configured) return;
-    setIsStreaming(true); setStreamingTipId(tipId); setStreamingText(""); setStreamingSkills([]); setChatError(""); setChatErrorTipId(null);
+    setProgressStage("preparing"); setIsStreaming(true); setStreamingTipId(tipId); setStreamingText(""); setStreamingSkills([]); setChatError(""); setChatErrorTipId(null);
     const ctrl = new AbortController(); controller.current = ctrl;
     setTips((current) => current.map((tip) => tip.id === tipId ? { ...tip, messages: [...tip.messages, { id: `temp-${Date.now()}`, tipId: tip.id, role: "user", content: question, createdAt: new Date().toISOString() }] } : tip));
     try {
-      const finalTip = await api.streamTip(tipId, question, language, ctrl.signal, (chunk) => setStreamingText((text) => text + chunk), (skill) => setStreamingSkills((current) => [...current, skill]));
+      await saveNow(); ctrl.signal.throwIfAborted();
+      const finalTip = await api.streamTip(tipId, question, language, ctrl.signal, (chunk) => setStreamingText((text) => text + chunk), (skill) => setStreamingSkills((current) => [...current, skill]), setProgressStage, () => setStreamingText(''));
       setTips((current) => current.map((tip) => tip.id === tipId ? finalTip : tip)); setStreamingText(""); setStreamingSkills([]);
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         setChatError(err instanceof Error ? err.message : t("editor.generateFailed")); setChatErrorTipId(tipId);
         if (err instanceof ApiError && ["MODEL_NOT_CONFIGURED", "LOCAL_MODEL_NOT_INSTALLED", "LOCAL_RUNTIME_UNAVAILABLE"].includes(err.code)) void refreshModelStatus();
+      } else {
+        setChatError(language === 'en' ? 'Generation stopped. The unfinished answer was not saved.' : '已停止生成，未完成的回答不会保存。'); setChatErrorTipId(tipId);
       }
       await load();
     } finally { setIsStreaming(false); setStreamingTipId(null); controller.current = null; }
@@ -1216,7 +1238,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   const renderTipPanel = (tip: TipThread, contextMode = false) => <TipPanel
     key={`${contextMode ? "context" : "active"}-${tip.id}`} tip={tip} childTips={childrenOf(tip.id)} contextMode={contextMode}
     modelStatus={modelStatus} webSearchEnabled={webSearchEnabled} webSearchBusy={webSearchBusy}
-    streamingText={streamingTipId === tip.id ? streamingText : ""} streamingSkills={streamingTipId === tip.id ? streamingSkills : []}
+    progressStage={progressStage} streamingText={streamingTipId === tip.id ? streamingText : ""} streamingSkills={streamingTipId === tip.id ? streamingSkills : []}
     isStreaming={isStreaming && streamingTipId === tip.id} error={chatErrorTipId === tip.id ? chatError : ""}
     onSend={(question) => void send(tip.id, question)} onStop={() => { if (streamingTipId === tip.id) controller.current?.abort(); }} onToggleWebSearch={() => void toggleWebSearch(tip.id)}
     onCollapse={() => collapseTip(tip)} onFocus={() => openTip(tip)}
@@ -1230,7 +1252,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
         <div className="editor-nav-top"><button className="back-button" onClick={() => void leaveEditor()}><ChevronLeft size={17} />{t("editor.library")}</button><button className="icon-button" onClick={() => setNavOpen(false)}><PanelLeftClose size={17} /></button></div>
         <div className="mini-brand"><span className="brand-mark"><Sparkles size={14} /></span>AI Tip</div>
         <button className="outline-toggle" onClick={() => setOutlineOpen(!outlineOpen)}><span>{t("editor.outline")}</span><ChevronDown size={15} className={outlineOpen ? "" : "rotated"} /></button>
-        {outlineOpen && <nav className="outline">{outline.map((item) => <button key={item.id} className={`level-${item.level || 2}`} onClick={() => document.querySelector(`[data-block-row="${item.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>{item.content || t("editor.untitledHeading")}</button>)}</nav>}
+        {outlineOpen && <nav className="outline">{outline.map((item) => <button key={item.id} title={item.content || t("editor.untitledHeading")} className={`level-${item.level || 2}`} onClick={() => document.querySelector(`[data-block-row="${item.id}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}>{item.content || t("editor.untitledHeading")}</button>)}</nav>}
         <div className="tip-summary"><p><MessageCircleMore size={15} />{t("editor.documentTips")} <span>{tips.length}</span></p>{tips.filter((tip) => !tip.parentTipId).slice(0, 5).map((tip) => <button key={tip.id} onClick={() => openTip(tip)}><i className={tip.status} /> <span>{tip.title}</span><small>{tip.messages.length}</small></button>)}</div>
       </aside>}
       {leftTip ? renderTipPanel(leftTip, true) : <main className="editor-main">
@@ -1243,6 +1265,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
             <div className="page-meta"><span>{documentItem.sourceType === "blank" ? t("editor.personalNote") : t("editor.imported", { type: documentItem.sourceType.toUpperCase() })}</span><span>{t("editor.lastEdited", { time: timeAgo(documentItem.updatedAt, language, t) })}</span></div>
             <input className="document-title" value={documentItem.title} onChange={(e) => updateTitle(e.target.value)} placeholder={t("editor.untitled")} />
             <div className="document-rule" />
+            {preparation && <p className="document-preparation" role="status">{preparation}</p>}
             {documentItem.sourceType === "pdf" ? <PdfPreview documentId={documentItem.id} blocks={documentItem.blocks} structure={documentItem.pdfStructure} tipsByBlock={tipsByBlock} onSelection={setSelection} onOpenTip={openTip} labels={{ loading: t("pdf.loading"), loadFailed: t("pdf.loadFailed"), structured: t("pdf.structured"), original: t("pdf.original"), structureHint: t("pdf.structureHint"), tableHeuristic: (confidence) => t("pdf.tableHeuristic", { confidence }), imageAlt: (page) => t("pdf.imageAlt", { page }), structureFailed: (error) => t("pdf.structureFailed", { error }), visualOnly: t("pdf.visualOnly"), exportAnnotations: t("pdf.exportAnnotations"), exportingAnnotations: t("pdf.exportingAnnotations"), runOcr: t("pdf.runOcr"), runningOcr: t("pdf.runningOcr"), ocrSource: (confidence) => t("pdf.ocrSource", { confidence }), page: (pageNumber, pageCount) => t("pdf.page", { page: pageNumber, count: pageCount }), tipPreview: t("tip.fullPreview"), close: t("common.close"), openTip: (title) => t("tip.open", { title }) }} /> : <>
               <div className="blocks">
                 {documentItem.blocks.map((item) => <EditableBlock key={item.id} item={item} tips={tipsByBlock[item.id] || []} onChange={updateBlock} onSelection={setSelection} onOpenTip={openTip} />)}

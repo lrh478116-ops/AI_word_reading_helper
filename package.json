@@ -1,7 +1,7 @@
 {
   "name": "ai-tip-document-app",
   "private": true,
-  "version": "1.12.13",
+  "version": "1.12.15",
   "description": "面向深度阅读的本地 AI 文档与 Tip 对话应用",
   "author": "AI Tip",
   "license": "MIT",
@@ -14,12 +14,15 @@
     "build": "tsc -b && vite build",
     "start": "tsx server/index.ts",
     "typecheck": "tsc -b --pretty false",
-    "desktop:prepare": "node scripts/generate-third-party-notices.mjs && pnpm build && esbuild server/index.ts --bundle --platform=node --format=cjs --target=node20 --external:pyodide --external:pdfjs-dist/* --outfile=dist-electron/server.cjs && esbuild server/python-worker.mjs --bundle --platform=node --format=cjs --target=node20 --external:pyodide --outfile=dist-electron/python-worker.cjs",
+    "stream-rag:test": "node scripts/test-stream-runtime.mjs && node scripts/test-stream-protocol-negative.mjs && node scripts/test-document-rag.mjs && node --require ./scripts/fixtures/forbid-python-network.cjs scripts/test-python-cancellation.mjs && node scripts/test-chat-preparation-integration.mjs",
+    "desktop:prepare": "node scripts/prepare-python-resources.mjs && node scripts/generate-third-party-notices.mjs && pnpm build && esbuild server/index.ts --bundle --platform=node --format=cjs --target=node20 --external:pyodide --external:pdfjs-dist/* --outfile=dist-electron/server.cjs && esbuild server/python-worker.mjs --bundle --platform=node --format=cjs --target=node20 --external:pyodide --outfile=dist-electron/python-worker.cjs",
     "desktop:dev": "pnpm desktop:prepare && concurrently -k -n web,desktop -c cyan,green \"vite\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs --dev\"",
     "desktop:start": "pnpm desktop:prepare && electron electron/main.mjs",
     "desktop:smoke": "pnpm desktop:prepare && electron electron/main.mjs --smoke-test",
     "cloud:network:test": "electron scripts/test-cloud-network-electron.mjs && electron scripts/test-supabase-chromium.mjs",
     "errors:test": "node scripts/test-readable-errors.mjs && electron scripts/test-cloud-network-electron.mjs",
+    "ux:test": "node scripts/test-offline-python-resources.mjs && node scripts/test-tip-progress.mjs && electron scripts/test-responsive-navigation.mjs",
+    "python:offline:test": "node --require ./scripts/fixtures/forbid-python-network.cjs scripts/test-python.mjs && node --require ./scripts/fixtures/forbid-python-network.cjs scripts/test-advanced-skills.mjs",
     "cloud:connection:test": "electron electron/main.mjs --cloud-connection-test",
     "search:live": "pnpm desktop:prepare && node scripts/test-live-reference-search.mjs",
     "skills:test": "pnpm desktop:prepare && node scripts/test-release-hardening.mjs && node scripts/test-public-repository-safety.mjs && node scripts/test-product-behavior.mjs && node scripts/test-document-import.mjs && node scripts/test-pdf-tip-anchors.mjs && node scripts/test-nested-tips.mjs && node scripts/test-python.mjs && node scripts/test-advanced-skills.mjs && node scripts/test-login-credentials.mjs && node scripts/test-managed-ollama-runtime.mjs && node scripts/test-bundled-llama-runtime.mjs && node scripts/test-electron-model-download.mjs && node scripts/test-ollama-installer.mjs && node scripts/test-local-model-integration.mjs && node scripts/test-skills-integration.mjs && node scripts/test-supabase-integration.mjs && node scripts/test-account-deletion-edge.mjs && node scripts/test-release-readiness.mjs && electron scripts/test-cloud-file-client-electron.mjs",
@@ -83,6 +86,7 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "!node_modules/pyodide/*.whl",
       "electron/**/*",
       "scripts/fixtures/*.base64",
       "package.json"
@@ -90,7 +94,7 @@
     "win": {
       "icon": "build/icon.png",
       "extraResources": [
-        { "from": "runtime/llama.cpp/win-x64", "to": "llama.cpp/win-x64", "filter": ["**/*"] },
+        { "from": "runtime/pyodide-packages", "to": "pyodide-packages", "filter": ["**/*"] }, { "from": "runtime/llama.cpp/win-x64", "to": "llama.cpp/win-x64", "filter": ["**/*"] },
         { "from": "LICENSE", "to": "LICENSE.txt" },
         { "from": "THIRD-PARTY-NOTICES.txt", "to": "THIRD-PARTY-NOTICES.txt" }
       ],
@@ -123,7 +127,7 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "extraResources": [
-        { "from": "runtime/llama.cpp/mac-arm64", "to": "llama.cpp/mac-arm64", "filter": ["**/*"] },
+        { "from": "runtime/pyodide-packages", "to": "pyodide-packages", "filter": ["**/*"] }, { "from": "runtime/llama.cpp/mac-arm64", "to": "llama.cpp/mac-arm64", "filter": ["**/*"] },
         { "from": "runtime/llama.cpp/mac-x64", "to": "llama.cpp/mac-x64", "filter": ["**/*"] },
         { "from": "LICENSE", "to": "LICENSE.txt" },
         { "from": "THIRD-PARTY-NOTICES.txt", "to": "THIRD-PARTY-NOTICES.txt" }

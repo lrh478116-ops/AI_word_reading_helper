@@ -55,6 +55,7 @@ async function bootSmokeModelServer() {
     if (req.url === "/v1/chat/completions") {
       const body = JSON.parse(raw || "{}");
       const system = String(body.messages?.[0]?.content || "");
+      if (system.includes('问题专业程度分类器')) await new Promise(resolve => setTimeout(resolve, 250));
       const lastUser = [...(body.messages || [])].reverse().find((message) => message.role === "user")?.content || "";
       const content = system.includes("问题专业程度分类器")
         ? JSON.stringify({ level: "general", professional: false, domain: "通用", confidence: 97, requiresWebReview: false, reason: "桌面烟测普通问题" })
@@ -522,7 +523,9 @@ async function createWindow() {
       if (JSON.stringify(acceptedExtensions) !== JSON.stringify(['.txt', '.md', '.markdown', '.docx', '.pdf'])) throw new Error('全局导入类型与服务端支持集不一致：' + JSON.stringify(acceptedExtensions));
       document.querySelector('.header-actions .primary').click();
       const dropSourceEditor = await waitFor('[data-editor-document]');
+      await waitUntil(() => document.querySelector('.document-preparation')?.textContent?.includes('文档上下文已就绪'), 'document entry preprocessing');
       const dropSourceId = dropSourceEditor.getAttribute('data-editor-document');
+      if (document.querySelector('.document-preparation').textContent.includes('失败')) throw new Error('进入文档时 Tip 预加载失败');
       setInput(document.querySelector('.document-title'), '拖放前必须保存的标题');
       const dropSourceBlock = await waitFor('[contenteditable][data-block-id]');
       dropSourceBlock.innerText = '这段最新修改必须在上传新文档前持久化。';
@@ -808,6 +811,8 @@ async function createWindow() {
       const rootComposer = rootPanel.querySelector('.tip-composer textarea');
       setTextArea(rootComposer, '这个概念是什么意思？');
       rootPanel.querySelector('.send-button').click();
+      const initialProgress = await waitUntil(() => rootPanel.querySelector('[data-tip-stage="assessing"]'), 'model assessment progress before first answer');
+      if (!initialProgress.textContent.includes('Elapsed:') && !initialProgress.textContent.includes('已等待')) throw new Error('Tip 等待时间没有进入真实聊天界面');
       const streamingSkillResults = await waitFor('[data-tip-panel="' + rootId + '"] .message.assistant details[data-skill-results]');
       if (streamingSkillResults.open) throw new Error('流式工具调用轨迹没有默认折叠');
       const rootMessage = await waitUntil(() => {

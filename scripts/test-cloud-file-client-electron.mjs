@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp, rm } from "node:fs/promises";
+import os from 'node:os';
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +14,8 @@ const documents = new Map([
   ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", makeDocument("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "编辑器云删除测试")]
 ]);
 const trace = [];
+const testProfile = await mkdtemp(path.join(os.tmpdir(), 'aitip-cloud-client-profile-'));
+app.setPath('userData', testProfile);
 
 function makeDocument(id, title) {
   return {
@@ -122,8 +125,12 @@ async function run() {
   const secondDeleteIndex = trace.findIndex(item => item.action === "delete-cloud" && item.id.startsWith("b"));
   if (firstDeleteIndex < 0 || secondSaveIndex < 0 || secondDeleteIndex <= secondSaveIndex) throw new Error(`invalid client lineage: ${JSON.stringify(trace)}`);
   console.log(JSON.stringify({ ...result, bearerAuthenticated: true, saveBeforeDelete: true, deletionRequests: trace.filter(item => item.action === "delete-cloud").length }));
+  } catch (error) {
+    const diagnostic = await window.webContents.executeJavaScript(`({ text: document.body.innerText.slice(0, 800), url: location.href })`).catch(() => ({}));
+    console.error('[cloud-client] failure diagnostic', diagnostic); throw error;
   } finally {
     window.destroy();
+    await rm(testProfile, { recursive: true, force: true }).catch(() => {});
     await new Promise(resolve => server.close(resolve));
     app.quit();
   }

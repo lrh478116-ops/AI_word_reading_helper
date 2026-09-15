@@ -2,6 +2,7 @@ import type { AiRuntimeStatus, AiSettings, AiSettingsInput, CloudUsage, Document
 import type { PromptLanguage } from "./prompts";
 import type { LocalModelCatalogItem, OllamaRuntimeInfo } from "./local-models";
 import { cloudErrorMessage } from './cloud-errors';
+import { isTipStage, type TipStage } from './tip-progress';
 import { LANGUAGE_STORAGE_KEY, normalizeLanguage } from './i18n';
 
 const TOKEN_KEY = "ai-tip-token";
@@ -157,6 +158,7 @@ export const api = {
   },
   documents: (status = "active") => request<{ documents: DocumentItem[] }>(`/documents?status=${status}`),
   document: (id: string) => request<{ document: DocumentItem; tips: TipThread[] }>(`/documents/${id}`),
+  prepareDocument: (id: string, signal: AbortSignal) => request<{ signature: string; enabled: boolean; chunks: number; characters: number; needsOcr: boolean; python: { ready: boolean; error: string } }>(`/documents/${id}/prepare`, { method: 'POST', body: '{}', signal }),
   documentSource: async (id: string) => {
     const response = await authorizedFetch(`/api/documents/${id}/source`);
     if (response.status === 401) session.clear();
@@ -197,7 +199,7 @@ export const api = {
   updateTip: (tipId: string, patch: Partial<Pick<TipThread, "status" | "title" | "memoryEnabled">>) =>
     request<{ tip: TipThread }>(`/tips/${tipId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteTip: (tipId: string) => request<{ ok: boolean; deletedIds: string[] }>(`/tips/${tipId}`, { method: "DELETE" }),
-  streamTip: async (tipId: string, question: string, language: PromptLanguage, signal: AbortSignal, onChunk: (chunk: string) => void, onSkill?: (skill: SkillTrace) => void) => {
+  streamTip: async (tipId: string, question: string, language: PromptLanguage, signal: AbortSignal, onChunk: (chunk: string) => void, onSkill?: (skill: SkillTrace) => void, onProgress?: (stage: TipStage) => void, onReset?: () => void) => {
     const response = await authorizedFetch(`/api/tips/${tipId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -220,7 +222,9 @@ export const api = {
       buffer = lines.pop() || "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const event = JSON.parse(line) as { type: string; delta?: string; tip?: TipThread; error?: string; skill?: SkillTrace };
+        const event = JSON.parse(line) as { type: string; delta?: string; tip?: TipThread; error?: string; skill?: SkillTrace; stage?: unknown };
+        if (event.type === 'progress' && isTipStage(event.stage)) onProgress?.(event.stage);
+        if (event.type === 'reset') onReset?.();
         if (event.type === "delta" && event.delta) onChunk(event.delta);
         if (event.type === "skill" && event.skill) onSkill?.(event.skill);
         if (event.type === "done" && event.tip) finalTip = event.tip;

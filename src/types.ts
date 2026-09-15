@@ -89,6 +89,7 @@ export interface DocumentItem {
   title: string;
   sourceType: "blank" | "txt" | "markdown" | "docx" | "pdf";
   originalName?: string;
+  sourceBytes?: number;
   favorite: boolean;
   status: "active" | "deleted";
   blocks: DocumentBlock[];
@@ -128,7 +129,8 @@ export interface TipMessage {
 }
 
 export interface SkillTrace {
-  name: "professional_assessment" | "web_search_assessment" | "professional_review" | "authority_check" | "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review" | "output_continuation" | "manual_lookup" | "search_failure_recovery";
+  name: "document_retrieval" | "model_transport" | "professional_assessment" | "web_search_assessment" | "professional_review" | "authority_check" | "web_search" | "web_fetch" | "cross_check" | "citation_audit" | "python" | "unit_check" | "uncertainty" | "symbolic_math" | "code_test" | "data_analysis" | "conflict_check" | "freshness_check" | "security_check" | "human_review" | "output_continuation" | "manual_lookup" | "search_failure_recovery";
+  retrieval?: { documentId: string; signature: string; chunks: Array<{ id: string; text: string; blockId?: string; page?: number; offset: number }> };
   label: string;
   detail: string;
   sources?: Array<{ title: string; url: string }>;

@@ -1,4 +1,5 @@
 node_modules/
+runtime/pyodide-packages/
 dist/
 dist-electron/
 /release/

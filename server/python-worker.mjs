@@ -1,16 +1,20 @@
-import { parentPort } from "node:worker_threads";
-import { loadPyodide } from "pyodide";
+import { parentPort, workerData } from "node:worker_threads";
+import { loadOfflinePython } from './python-resources.ts';
+import { calculateInRuntime } from './python-calculation.ts';
 
 let runtimePromise;
-const runtime = () => (runtimePromise ||= loadPyodide({ stdout: () => {}, stderr: () => {} }));
+const runtime = async (packages = []) => {
+  const pyodide = await (runtimePromise ||= loadOfflinePython(packages, workerData?.pythonPackagesRoot));
+  if (packages.length) await pyodide.loadPackage(packages);
+  return pyodide;
+};
 
 async function symbolic(payload) {
   const expression = String(payload.expression || "").trim().slice(0, 2000);
   const operation = ["simplify", "solve", "diff", "integrate", "factor", "expand"].includes(payload.operation) ? payload.operation : "simplify";
   const variable = /^[A-Za-z][A-Za-z0-9]*$/.test(String(payload.variable || "x")) ? String(payload.variable || "x") : "x";
   if (!expression || /__|import|eval|exec|open|lambda|;|\{|\}/i.test(expression) || !/^[A-Za-z0-9_+\-*/^().,=<>\s\[\]]+$/.test(expression)) throw new Error("符号表达式包含不安全内容");
-  const pyodide = await runtime();
-  await pyodide.loadPackage("sympy");
+  const pyodide = await runtime(['sympy']);
   return String(await pyodide.runPythonAsync(`
 import sympy as sp
 _text = ${JSON.stringify(expression)}
@@ -62,8 +66,7 @@ json.dumps({"passed":True,"output":_out.getvalue()[-4000:]},ensure_ascii=False)
 async function dataAnalysis(payload) {
   const csv = String(payload.csv || "").slice(0, 100000);
   if (!csv.trim()) throw new Error("CSV 数据为空");
-  const pyodide = await runtime();
-  await pyodide.loadPackage("pandas");
+  const pyodide = await runtime(['pandas']);
   return String(await pyodide.runPythonAsync(`
 import io, json, pandas as pd
 _csv = ${JSON.stringify(csv)}
@@ -97,6 +100,14 @@ json.dumps({"value":_value,"standard_uncertainty":_u,"relative_uncertainty":abs(
 
 parentPort.on("message", async ({ id, mode, payload }) => {
   try {
+    if (mode === 'prepare') {
+      const pyodide = await runtime(); await pyodide.runPythonAsync('import ast, contextlib, io, json, math, statistics, decimal, fractions');
+      parentPort.postMessage({ id, ok: true, result: 'ready' }); return;
+    }
+    if (mode === 'calculate') {
+      const result = await calculateInRuntime(await runtime(), String(payload.code || ''));
+      parentPort.postMessage({ id, ok: true, result }); return;
+    }
     const result = mode === "symbolic" ? await symbolic(payload) : mode === "code_test" ? await codeTest(payload) : mode === "data_analysis" ? await dataAnalysis(payload) : mode === "uncertainty" ? await uncertainty(payload) : (() => { throw new Error("未知 Python 工作模式"); })();
     parentPort.postMessage({ id, ok: true, result });
   } catch (error) {

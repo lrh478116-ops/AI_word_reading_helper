@@ -393,6 +393,8 @@ try {
   if (!englishAnswerPrompt || englishAnswerPrompt.includes("你是文档内的局部阅读助手") || /正确性规则/u.test(englishAnswerPrompt)) throw new Error(`英文请求的模型 system message 仍消费中文内置 Prompt：${englishAnswerPrompt}`);
 
   const pythonEvents = await chat(created.tip.id, "请计算 0.1 + 0.2", token);
+  if (pythonEvents[0]?.type !== 'progress' || pythonEvents[0].stage !== 'assessing') throw new Error('正式聊天入口未即时报告评估阶段');
+  if (!pythonEvents.some(event => event.type === 'progress' && event.stage === 'tool')) throw new Error('执行 Python 前缺少真实工具阶段');
   const searchEvents = await chat(created.tip.id, "请联网搜索最新稳定版本", token);
   const cachedSearchEvents = await chat(created.tip.id, "请联网搜索最新稳定版本", token);
   const searchRequestsAfterCachedQuery = searchRequests;
