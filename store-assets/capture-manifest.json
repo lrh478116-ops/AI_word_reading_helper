@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "platform": "win32",
+  "capturedAt": "2026-09-16T04:50:19.712Z",
+  "sourceCommit": "59d6a01665fd8df1a0f69096286113218fb80478",
+  "submissionReady": false,
+  "demonstrationResponses": true,
+  "sourceHashes": {
+    "dist-electron/server.cjs": "79dbed5a71af936a287698a36729c25c3ee504665b9dc14ec27aae2f8e669d26",
+    "dist/index.html": "adef7cb54bc4792ebeb6204ec780c4b045bbac5f8f124e6e3f58d8a882ef2760",
+    "src/App.tsx": "b68c04ac38e642c7a95b1889f5f6c6c7a5ed4936eadb8b971161c6f3fa939d6a",
+    "scripts/capture-store-showcase.mjs": "1e4ad57de1f8807116dd26b61ed8dce8c25236eb5181348530c02d66eb3e53ea"
+  },
+  "artifacts": [
+    {
+      "file": "store-assets/raw/zh-CN/01-source.png",
+      "sha256": "c453fff9c861312ada02796ef0433b83c75b5063eb1914fc2efad2371d235db0",
+      "locale": "zh-CN",
+      "width": 1440,
+      "height": 900,
+      "id": "01-source",
+      "visibleTextHash": "6d3176ccbc18e8c36d9fdd72d15326d56aefe88565e0a53168d90ca12e9c7571"
+    },
+    {
+      "file": "store-assets/raw/zh-CN/02-follow-up.png",
+      "sha256": "c06f7b93c13d67c28b793db58b2f39a062b865cf502afb3dd1e6809da8b668e6",
+      "locale": "zh-CN",
+      "width": 1440,
+      "height": 900,
+      "id": "02-follow-up",
+      "visibleTextHash": "5e67306bc00aafa7ff3510df14896c09bc020f2c71d52d10d014b91d758c9551"
+    },
+    {
+      "file": "store-assets/raw/zh-CN/03-tree.png",
+      "sha256": "d2e1e8717baa839e78ad95817ef799e75bfb583f0cc45ea24cecf5471661a6c9",
+      "locale": "zh-CN",
+      "width": 1440,
+      "height": 900,
+      "id": "03-tree",
+      "visibleTextHash": "bf9af962046428002f5fd6cecbf728df5959e10bc403b85648869c35994d7bc0"
+    },
+    {
+      "file": "store-assets/raw/zh-CN/04-models.png",
+      "sha256": "80c9be57f80815bcd6ea8c793cd4d60822b1b906f180f9bcdd0990303079ac3e",
+      "locale": "zh-CN",
+      "width": 1440,
+      "height": 900,
+      "id": "04-models",
+      "visibleTextHash": "69409f46d48ccba38c402b42d16e4241decfc95795b469920506c87e59a3ccf9"
+    },
+    {
+      "file": "store-assets/raw/en/01-source.png",
+      "sha256": "c84b6b41c135adc042c24de1f04cf4620a89152d7606b6878297a1a9532867f5",
+      "locale": "en",
+      "width": 1440,
+      "height": 900,
+      "id": "01-source",
+      "visibleTextHash": "a09b0aba00caf2944e7d27419522bdca9f7e8d3ff59e75f975a228707624bf90"
+    },
+    {
+      "file": "store-assets/raw/en/02-follow-up.png",
+      "sha256": "d1ee46474daff5ee05d1c4eb966ac7dbefcd9bda4da5ed72e792a71cbc5d3c13",
+      "locale": "en",
+      "width": 1440,
+      "height": 900,
+      "id": "02-follow-up",
+      "visibleTextHash": "915005e980b229942c139805a44f4793bb76b7eca9fcb4be498b816e6d5a38c2"
+    },
+    {
+      "file": "store-assets/raw/en/03-tree.png",
+      "sha256": "9251b2fc91926a148e4dd9c5ba7a7f203d4b2d3f356d9ee7b57e5e0b6816c21a",
+      "locale": "en",
+      "width": 1440,
+      "height": 900,
+      "id": "03-tree",
+      "visibleTextHash": "4451a510225cc40077c764330073052852fedd0860380b5a0d308f06f852af0d"
+    },
+    {
+      "file": "store-assets/raw/en/04-models.png",
+      "sha256": "1457b50de3a790f63bed99f85f10a7ba9082c413819d3a6bb26426961aecfdc1",
+      "locale": "en",
+      "width": 1440,
+      "height": 900,
+      "id": "04-models",
+      "visibleTextHash": "588c1d6810ca533334709311fbf5f1377166fa2fff74a761586ac212ce70e568"
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-09-16T04:50:40.767Z",
+  "platform": "win32",
+  "sourceCommit": "59d6a01665fd8df1a0f69096286113218fb80478",
+  "capturedAt": "2026-09-16T04:50:19.712Z",
+  "submissionReady": false,
+  "demonstrationResponses": true,
+  "sourceHashes": {
+    "dist-electron/server.cjs": "79dbed5a71af936a287698a36729c25c3ee504665b9dc14ec27aae2f8e669d26",
+    "dist/index.html": "adef7cb54bc4792ebeb6204ec780c4b045bbac5f8f124e6e3f58d8a882ef2760",
+    "src/App.tsx": "b68c04ac38e642c7a95b1889f5f6c6c7a5ed4936eadb8b971161c6f3fa939d6a",
+    "scripts/capture-store-showcase.mjs": "1e4ad57de1f8807116dd26b61ed8dce8c25236eb5181348530c02d66eb3e53ea",
+    "store-assets/metadata.json": "af279f204c6a13bff1cefea1f24a46fcfc42c55d903712cbaed00ccabe59cf55",
+    "scripts/render-store-showcase.mjs": "d6768e889d722cb263c4b6a17b99026d04693ef3b0e5f12b34a3e6a4ad2c7260"
+  },
+  "artifacts": [
+    {
+      "file": "store-assets/showcase/zh-CN/01-source.png",
+      "sha256": "fec1a91cfce654626caa010d6b87c0435eb3c30b93fddafa1f920149ef92f769",
+      "raw": "store-assets/raw/zh-CN/01-source.png",
+      "rawSha256": "c453fff9c861312ada02796ef0433b83c75b5063eb1914fc2efad2371d235db0",
+      "locale": "zh-CN",
+      "id": "01-source",
+      "width": 2880,
+      "height": 1800,
+      "title": "读到哪里，就问到哪里",
+      "subtitle": "选中文档原文，让解释与疑问留在同一处。"
+    },
+    {
+      "file": "store-assets/showcase/zh-CN/02-follow-up.png",
+      "sha256": "5910e26543bea4c1402f43557d424df2c0f4e3c8601e582434b692f44f8d8287",
+      "raw": "store-assets/raw/zh-CN/02-follow-up.png",
+      "rawSha256": "c06f7b93c13d67c28b793db58b2f39a062b865cf502afb3dd1e6809da8b668e6",
+      "locale": "zh-CN",
+      "id": "02-follow-up",
+      "width": 2880,
+      "height": 1800,
+      "title": "一个回答，继续向下探索",
+      "subtitle": "从回答创建子 Tip；展开新问题，也保留上一层语境。"
+    },
+    {
+      "file": "store-assets/showcase/zh-CN/03-tree.png",
+      "sha256": "93fc892d068e00a83c8f3067f63b857595b14a8ef120a5709d3c4f61034b317f",
+      "raw": "store-assets/raw/zh-CN/03-tree.png",
+      "rawSha256": "d2e1e8717baa839e78ad95817ef799e75bfb583f0cc45ea24cecf5471661a6c9",
+      "locale": "zh-CN",
+      "id": "03-tree",
+      "width": 2880,
+      "height": 1800,
+      "title": "问题越深入，思路越清楚",
+      "subtitle": "用 Tip Tree 命名、定位和回访每一条讨论分支。"
+    },
+    {
+      "file": "store-assets/showcase/zh-CN/04-models.png",
+      "sha256": "c09dfc7e1c73f7310c89a46467a0b81c0d293ba2db05a49423bd2fe204c0a7c8",
+      "raw": "store-assets/raw/zh-CN/04-models.png",
+      "rawSha256": "80c9be57f80815bcd6ea8c793cd4d60822b1b906f180f9bcdd0990303079ac3e",
+      "locale": "zh-CN",
+      "id": "04-models",
+      "width": 2880,
+      "height": 1800,
+      "title": "文档在本机，模型自己选",
+      "subtitle": "选择兼容本地模型；联网搜索和云端上传由你开启。"
+    },
+    {
+      "file": "store-assets/showcase/en/01-source.png",
+      "sha256": "a5567b69cbcb688a88673c54bade520fb1487557192722fabf39534c13b59aaa",
+      "raw": "store-assets/raw/en/01-source.png",
+      "rawSha256": "c84b6b41c135adc042c24de1f04cf4620a89152d7606b6878297a1a9532867f5",
+      "locale": "en",
+      "id": "01-source",
+      "width": 2880,
+      "height": 1800,
+      "title": "Ask where the question begins.",
+      "subtitle": "Select a passage. Keep the explanation beside its source."
+    },
+    {
+      "file": "store-assets/showcase/en/02-follow-up.png",
+      "sha256": "7c39e2605dcdf904149f0b04b732731fa8eee9996f415dca111a2eae4a7abb8f",
+      "raw": "store-assets/raw/en/02-follow-up.png",
+      "rawSha256": "d1ee46474daff5ee05d1c4eb966ac7dbefcd9bda4da5ed72e792a71cbc5d3c13",
+      "locale": "en",
+      "id": "02-follow-up",
+      "width": 2880,
+      "height": 1800,
+      "title": "Let one answer lead further.",
+      "subtitle": "Open a child Tip from a reply, with its parent still in view."
+    },
+    {
+      "file": "store-assets/showcase/en/03-tree.png",
+      "sha256": "a9307c138b7d12ab7154f0e8b8aa8642a9fbf1bbd2855dc5a48815d78ad043e0",
+      "raw": "store-assets/raw/en/03-tree.png",
+      "rawSha256": "9251b2fc91926a148e4dd9c5ba7a7f203d4b2d3f356d9ee7b57e5e0b6816c21a",
+      "locale": "en",
+      "id": "03-tree",
+      "width": 2880,
+      "height": 1800,
+      "title": "Find your way through an idea.",
+      "subtitle": "Name a branch. Revisit a question. Follow your Tip Tree."
+    },
+    {
+      "file": "store-assets/showcase/en/04-models.png",
+      "sha256": "a03190cacc11f2e9ca6323e0df07699e6eb7634b6f0a5a36d556221f87e322a4",
+      "raw": "store-assets/raw/en/04-models.png",
+      "rawSha256": "1457b50de3a790f63bed99f85f10a7ba9082c413819d3a6bb26426961aecfdc1",
+      "locale": "en",
+      "id": "04-models",
+      "width": 2880,
+      "height": 1800,
+      "title": "Local documents. Your choice of AI.",
+      "subtitle": "Choose a compatible local model. Enable search or uploads only when needed."
+    }
+  ]
+}

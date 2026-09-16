@@ -62,9 +62,9 @@ try {
   }
 } finally { await new Promise((resolve) => server.close(resolve)); }
 
-const assetDir = path.join(root, "store-assets", "macos", "zh-CN");
+const assetDir = path.join(root, "store-assets", "raw", "zh-CN");
 const screenshots = (await readdir(assetDir)).filter((name) => name.endsWith(".png"));
-assert.ok(screenshots.length >= 3, "at least three real macOS screenshots are required");
+assert.ok(screenshots.length >= 3, "at least three real client draft captures are required; this is not Mac submission evidence");
 const accepted = new Set(["1280x800", "1440x900", "2560x1600", "2880x1800"]);
 for (const name of screenshots) {
   const bytes = await readFile(path.join(assetDir, name));
@@ -73,4 +73,5 @@ for (const name of screenshots) {
   assert.ok(accepted.has(size), `${name} has unsupported Mac App Store dimensions ${size}`);
 }
 
-console.log(JSON.stringify({ localReleaseWebsite: true, onlineVerificationRequired: "pnpm release:verify:online", privacyDisclosures: true, deletionInstructions: true, trackerFree: true, appPrivacyEntry: true, macScreenshots: screenshots.length }));
+const captureManifest = JSON.parse(await read('store-assets/capture-manifest.json'));
+console.log(JSON.stringify({ localReleaseWebsite: true, onlineVerificationRequired: "pnpm release:verify:online", privacyDisclosures: true, deletionInstructions: true, trackerFree: true, appPrivacyEntry: true, draftClientScreenshots: screenshots.length, capturePlatform: captureManifest.platform, macSubmission: 'NOT_CAUSALLY_VERIFIED', requiredSubmissionCommand: 'node scripts/test-store-assets.mjs --submission' }));

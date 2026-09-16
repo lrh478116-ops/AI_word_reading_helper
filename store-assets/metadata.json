@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "platform": "macOS",
+  "primaryCategory": "Productivity",
+  "secondaryCategory": "Education",
+  "privacyPolicyURL": "https://lrh478116-ops.github.io/ai-tip-support-site/privacy/",
+  "supportURL": "https://lrh478116-ops.github.io/ai-tip-support-site/",
+  "locales": {
+    "zh-CN": {
+      "name": "AI Tip · 原文深读",
+      "subtitle": "读论文、解难点，让追问留在原文旁",
+      "promotionalText": "把读不懂的一句话，变成有上下文的讨论。从原文创建 Tip，从回答继续追问，用 Tip Tree 找回思路。支持 PDF 原版式阅读、本地 OCR 和自选模型，文档默认保存在本机。",
+      "keywords": "PDF,论文阅读,文献笔记,扫描识别,知识管理,技术文档,本地模型,OCR",
+      "description": "读到一个陌生概念，不必把原文和问题反复搬进聊天窗口。\n\nAI Tip 为论文、教材、技术规范和政策资料提供一处可以边读边问的空间。选中原文创建 Tip，让解释留在产生疑问的位置；从回答中继续提问，让一个难点逐步展开，同时保留返回原文的路径。\n\n让问题有出处\n一句话、一个术语或一段论证，都可以成为 Tip 的起点。对话与选中的位置关联，重新打开文档时仍可定位。通俗解释、详细解释、专业解释和举个例子，帮助你按需要切换理解方式。\n\n沿着回答继续探索\n回答中的概念也能创建子 Tip。进入下一层时，父对话成为左侧上下文，新的问题在右侧展开；收回后恢复上一层。每个 Tip 独立保存聊天，可通过记忆开关决定是否参考其他 Tip 的摘要。\n\n把思考整理成 Tip Tree\n分支多了，也不必在聊天记录中来回翻找。树状图呈现对话之间的关系，点击节点回到对应问题，并为节点改成便于回顾的名称。从“这句话是什么意思”到“这个结论有什么前提”，理解过程可以逐层找回。\n\n阅读复杂 PDF，不拆散原始页面\n保留 PDF 的分页、图表和原始版式，在文字层选取内容并标记 Tip。扫描页可使用本地中英文 OCR 识别后提问。需要带走阅读成果时，可导出带 Tip 批注的 PDF 副本，原文件不被覆盖。OCR 可能存在识别误差，请结合原页核对。\n\n长文档也有针对性的上下文\n面对较大的文档，应用会在本机检索与问题相关的文本片段，连同选中的原文交给模型。不是每次都发送整篇文档，也不代表模型已经阅读或记住全部页面；扫描内容需要先识别出文字。\n\n文档由你保管，模型由你选择\n支持 PDF、DOCX、Markdown 和文本文件。导入、编辑、Tip 与聊天默认保存在当前设备，登录云账户不会自动上传文档。只有主动点击上传，才创建云端副本；当前每个用户云端限额为 5 MB。\n\n可接入自己的兼容大模型 API，也可在应用内下载或导入兼容 GGUF 本地模型。内置推理运行环境，本地模型路线无需另装独立 AI 服务。模型文件需另行下载并占用磁盘、内存；是否适合运行取决于 Mac 配置与所选模型。\n\n联网与核验，按需开启\n联网搜索默认关闭，可在设置或对话输入框旁切换。启用后可查找外部资料；数值问题还可调用本地计算工具。AI 回答、检索结果与计算过程仍需结合原文和具体条件判断，不保证事实始终准确或资料始终最新。\n\n使用前请了解\n没有配置模型时仍可导入和阅读文档；生成 AI 回答需要可用的在线接口或已下载并加载的本地模型。使用在线 API 时，问题及相关文档上下文会发送给你选择的服务商，其费用和条款由该服务商决定。本地推理不等于开启联网搜索后仍完全离线。\n\n支持简体中文与英文界面。\n\n让每一次追问，都能回到原文；让读懂的过程，值得再次回顾。"
+    },
+    "en": {
+      "name": "AI Tip: Read & Explore",
+      "subtitle": "Follow questions, keep context",
+      "promotionalText": "Ask beside a passage, explore a reply, and find your way back with Tip Tree. Read original-layout PDFs with local OCR and your choice of AI model.",
+      "keywords": "PDF,OCR,papers,research,annotation,notes,local models,document reader,study,knowledge",
+      "description": "A difficult passage deserves more than a disconnected chat.\n\nAI Tip is a reading workspace for research papers, textbooks, technical specifications and policy documents. Start a Tip from a passage, explore an unfamiliar idea inside a reply, and keep the route back to your source.\n\nASK WHERE THE QUESTION BEGINS\nSelect a sentence, term or argument to open a conversation linked to that location. Return to it as you read. Choose a plain-language explanation, a detailed explanation, a technical explanation or an example.\n\nEXPLORE A REPLY WITHOUT LOSING YOUR PLACE\nCreate a child Tip from text in a conversation. The parent conversation moves into the context pane while the new question opens beside it. Close the child to return to the previous view. Each Tip keeps its own chat; memory controls let it refer to summaries from other Tips.\n\nSEE HOW YOUR QUESTIONS CONNECT\nTip Tree maps the branches of your discussion. Select a node to revisit a conversation and rename it for easier review. Keep track of the assumptions, definitions and follow-up questions behind an idea.\n\nKEEP THE ORIGINAL PDF IN VIEW\nRead original PDF pages with their page layout and figures intact. Select native text to create an anchored Tip, or run local Chinese and English OCR on scanned pages. Export PDF Tips to an annotated copy without overwriting the original. OCR can make mistakes; check recognized text against the page.\n\nFIND RELEVANT CONTEXT IN LONG DOCUMENTS\nFor large documents, on-device text retrieval finds passages related to your question and supplies them alongside your selection. It does not mean the model has read or remembered every page. Scanned content needs recognized text before it can be searched.\n\nYOUR DOCUMENTS, YOUR MODEL\nImport PDF, DOCX, Markdown and text files. Documents, edits, Tips and conversations are saved locally by default. Signing in does not upload them automatically. Cloud copies are created only when you choose to upload, with a current 5 MB quota per user.\n\nConnect your own compatible AI API, or download or import a compatible GGUF model in the app. The built-in inference runtime supports the local-model route without a separate AI server. Model weights require a separate download, disk space and sufficient memory; suitability depends on your Mac and the model.\n\nLOOK BEYOND THE PAGE WHEN YOU CHOOSE\nWeb search is off by default. Switch it on in Settings or beside the message input when you want external sources. Local calculation tools can assist with numerical questions. AI answers, sources and calculations still need review against the document and their assumptions; accuracy and freshness are not guaranteed.\n\nBEFORE YOU START\nImporting and reading documents do not require a model API. AI replies require a working online provider or a downloaded, loaded local model. Online providers receive your questions and relevant document context and may charge under their own terms. Local inference is not fully offline if you enable web search.\n\nAvailable in Simplified Chinese and English.\n\nKeep your questions connected to the text, and your path to understanding easy to revisit."
+    }
+  },
+  "screenshots": [
+    {
+      "id": "01-source",
+      "zhTitle": "读到哪里，就问到哪里",
+      "zhSubtitle": "选中文档原文，让解释与疑问留在同一处。",
+      "enTitle": "Ask where the question begins.",
+      "enSubtitle": "Select a passage. Keep the explanation beside its source."
+    },
+    {
+      "id": "02-follow-up",
+      "zhTitle": "一个回答，继续向下探索",
+      "zhSubtitle": "从回答创建子 Tip；展开新问题，也保留上一层语境。",
+      "enTitle": "Let one answer lead further.",
+      "enSubtitle": "Open a child Tip from a reply, with its parent still in view."
+    },
+    {
+      "id": "03-tree",
+      "zhTitle": "问题越深入，思路越清楚",
+      "zhSubtitle": "用 Tip Tree 命名、定位和回访每一条讨论分支。",
+      "enTitle": "Find your way through an idea.",
+      "enSubtitle": "Name a branch. Revisit a question. Follow your Tip Tree."
+    },
+    {
+      "id": "04-models",
+      "zhTitle": "文档在本机，模型自己选",
+      "zhSubtitle": "选择兼容本地模型；联网搜索和云端上传由你开启。",
+      "enTitle": "Local documents. Your choice of AI.",
+      "enSubtitle": "Choose a compatible local model. Enable search or uploads only when needed."
+    }
+  ]
+}

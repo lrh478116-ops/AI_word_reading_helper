@@ -1,0 +1,33 @@
+A difficult passage deserves more than a disconnected chat.
+
+AI Tip is a reading workspace for research papers, textbooks, technical specifications and policy documents. Start a Tip from a passage, explore an unfamiliar idea inside a reply, and keep the route back to your source.
+
+ASK WHERE THE QUESTION BEGINS
+Select a sentence, term or argument to open a conversation linked to that location. Return to it as you read. Choose a plain-language explanation, a detailed explanation, a technical explanation or an example.
+
+EXPLORE A REPLY WITHOUT LOSING YOUR PLACE
+Create a child Tip from text in a conversation. The parent conversation moves into the context pane while the new question opens beside it. Close the child to return to the previous view. Each Tip keeps its own chat; memory controls let it refer to summaries from other Tips.
+
+SEE HOW YOUR QUESTIONS CONNECT
+Tip Tree maps the branches of your discussion. Select a node to revisit a conversation and rename it for easier review. Keep track of the assumptions, definitions and follow-up questions behind an idea.
+
+KEEP THE ORIGINAL PDF IN VIEW
+Read original PDF pages with their page layout and figures intact. Select native text to create an anchored Tip, or run local Chinese and English OCR on scanned pages. Export PDF Tips to an annotated copy without overwriting the original. OCR can make mistakes; check recognized text against the page.
+
+FIND RELEVANT CONTEXT IN LONG DOCUMENTS
+For large documents, on-device text retrieval finds passages related to your question and supplies them alongside your selection. It does not mean the model has read or remembered every page. Scanned content needs recognized text before it can be searched.
+
+YOUR DOCUMENTS, YOUR MODEL
+Import PDF, DOCX, Markdown and text files. Documents, edits, Tips and conversations are saved locally by default. Signing in does not upload them automatically. Cloud copies are created only when you choose to upload, with a current 5 MB quota per user.
+
+Connect your own compatible AI API, or download or import a compatible GGUF model in the app. The built-in inference runtime supports the local-model route without a separate AI server. Model weights require a separate download, disk space and sufficient memory; suitability depends on your Mac and the model.
+
+LOOK BEYOND THE PAGE WHEN YOU CHOOSE
+Web search is off by default. Switch it on in Settings or beside the message input when you want external sources. Local calculation tools can assist with numerical questions. AI answers, sources and calculations still need review against the document and their assumptions; accuracy and freshness are not guaranteed.
+
+BEFORE YOU START
+Importing and reading documents do not require a model API. AI replies require a working online provider or a downloaded, loaded local model. Online providers receive your questions and relevant document context and may charge under their own terms. Local inference is not fully offline if you enable web search.
+
+Available in Simplified Chinese and English.
+
+Keep your questions connected to the text, and your path to understanding easy to revisit.

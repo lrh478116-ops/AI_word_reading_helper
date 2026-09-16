@@ -1,0 +1,1 @@
+PDF,OCR,papers,research,annotation,notes,local models,document reader,study,knowledge
