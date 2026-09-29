@@ -89,7 +89,7 @@ Mac App Store Universal 包（Apple Silicon + Intel，必须在安装 Xcode 的 
 pnpm desktop:dist:mas
 ```
 
-MAS 构建已启用 App Sandbox、网络客户端/本地服务、用户选择文件读写权限。正式上传前仍需在 Apple Developer 后台创建 `com.aitip.reader` App ID、Mac App Store provisioning profile，并通过 Xcode/Transporter 完成签名上传。Windows 打包配置与 MAS 权限互相独立。
+MAS 构建已启用 App Sandbox、网络客户端/本地服务、用户选择文件读写权限。Bundle ID 为 `ltd.mijiu.aitip`；正式上传前仍需创建 Mac App Store provisioning profile，并通过 Xcode/Transporter 完成签名上传。Windows 打包配置与 MAS 权限互相独立。
 
 ## 配置真实 AI
 

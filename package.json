@@ -70,7 +70,7 @@
     "wait-on": "9.1.0"
   },
   "build": {
-    "appId": "com.aitip.reader",
+    "appId": "ltd.mijiu.aitip",
     "productName": "AI Tip",
     "asar": true,
     "asarUnpack": [

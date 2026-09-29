@@ -9,7 +9,7 @@
 | Platform | macOS |
 | Primary Category | Productivity / 效率 |
 | Secondary Category | Education / 教育（可选） |
-| Bundle ID | com.aitip.reader（须与 Apple Developer 中正式 App ID 一致） |
+| Bundle ID | ltd.mijiu.aitip（须与 Apple Developer 中正式 App ID 一致） |
 | SKU | [运营者内部唯一编号] |
 | Primary Language | [按实际首发本地化选择；提供简体中文与英文] |
 | Privacy Policy URL | https://lrh478116-ops.github.io/ai-tip-support-site/privacy/ |
