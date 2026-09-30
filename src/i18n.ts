@@ -5,6 +5,7 @@ export const LANGUAGE_STORAGE_KEY = "ai-tip-language";
 const zh: Record<string, string> = {
   "language.label": "language", "language.zh": "简体中文", "language.en": "English",
   "common.close": "关闭", "common.back": "返回", "common.save": "保存", "common.delete": "删除", "common.copy": "复制", "common.retry": "重试", "common.loading": "加载中…",
+  "privacyConsent.title": "请先阅读并同意隐私政策", "privacyConsent.description": "AI Tip 会在本机保存你的文档和设置。使用云端账户、AI 服务或联网搜索时，相关数据会按隐私政策所述发送给对应服务。请在继续前了解数据的收集、使用和删除方式。", "privacyConsent.readPolicy": "阅读隐私政策", "privacyConsent.accept": "同意并继续", "privacyConsent.note": "只有点击“同意并继续”后，才能进入登录和使用页面。",
   "auth.eyebrow": "为深度阅读而生", "auth.hero1": "让每一次疑问，", "auth.hero2": "都留在知识发生的地方。",
   "auth.description": "选中一段文字，就地开启一场独立的 AI 对话。理解、追问、折叠，再回来时思路仍然完整。",
   "auth.previewSelection": "自注意力机制允许序列中的每个 Token…", "auth.previewQuestion": "这里的“聚合”是什么意思？",
@@ -80,6 +81,7 @@ const zh: Record<string, string> = {
 const en: Record<string, string> = {
   "language.label": "Language", "language.zh": "简体中文", "language.en": "English",
   "common.close": "Close", "common.back": "Back", "common.save": "Save", "common.delete": "Delete", "common.copy": "Copy", "common.retry": "Retry", "common.loading": "Loading…",
+  "privacyConsent.title": "Please review and accept the Privacy Policy", "privacyConsent.description": "AI Tip stores your documents and settings on this device. When you use a cloud account, AI services, or web search, relevant data is sent to those services as described in the Privacy Policy. Review how data is collected, used, and deleted before continuing.", "privacyConsent.readPolicy": "Read Privacy Policy", "privacyConsent.accept": "Agree and continue", "privacyConsent.note": "You can proceed to sign in and use the app only after accepting.",
   "auth.eyebrow": "Built for deep reading", "auth.hero1": "Keep every question", "auth.hero2": "where knowledge happens.",
   "auth.description": "Select a passage and start an independent AI conversation in place. Understand, follow up, collapse it, and return without losing your train of thought.",
   "auth.previewSelection": "Self-attention lets each token aggregate…", "auth.previewQuestion": "What does “aggregate” mean here?", "auth.footer": "Reading is not browsing; it is building a connection with knowledge.",

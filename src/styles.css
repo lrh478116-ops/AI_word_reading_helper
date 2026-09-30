@@ -78,6 +78,19 @@ button { border: 0; background: none; cursor: pointer; }
 .auth-card .auth-language { grid-template-columns: auto 1fr minmax(145px, auto); padding: 10px 12px; border: 1px solid #e3e5de; border-radius: 10px; background: #f7f8f4; }
 .auth-card .auth-language select { width: 100%; }
 
+.privacy-consent-shell { min-height: 100vh; display: grid; place-items: center; padding: 32px 20px; background: #f7f8f4; }
+.privacy-consent-card { width: min(520px, 100%); display: flex; flex-direction: column; align-items: flex-start; gap: 18px; padding: clamp(26px, 6vw, 48px); border: 1px solid #e3e6de; border-radius: 20px; background: #fff; box-shadow: 0 20px 70px rgba(44, 54, 39, .08); }
+.privacy-consent-icon { width: 52px; height: 52px; display: grid; place-items: center; color: #5f7158; border-radius: 16px; background: #edf2e9; }
+.privacy-consent-card .overline { margin: 0; color: #87917f; font-size: 10px; font-weight: 700; letter-spacing: .13em; }
+.privacy-consent-card h1 { margin: -7px 0 0; color: #30372e; font: 600 clamp(25px, 5vw, 32px)/1.3 "Songti SC", SimSun, Georgia, serif; }
+.privacy-consent-copy, .privacy-consent-note { margin: 0; color: #70776c; font-size: 13px; line-height: 1.85; }
+.privacy-consent-link { display: inline-flex; align-items: center; gap: 8px; color: #5f7158; font-size: 13px; font-weight: 700; text-decoration: none; }
+.privacy-consent-link:hover { text-decoration: underline; }
+.privacy-consent-accept { width: 100%; min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin-top: 5px; }
+.privacy-consent-note { width: 100%; color: #999e95; font-size: 11px; text-align: center; }
+.privacy-consent-card .auth-language { width: 100%; grid-template-columns: auto 1fr minmax(145px, auto); padding: 10px 12px; border: 1px solid #e3e5de; border-radius: 10px; background: #f7f8f4; }
+.privacy-consent-card .auth-language select { width: 100%; }
+
 /* Library */
 .app-layout { min-height: 100vh; display: grid; grid-template-columns: 238px 1fr; }
 .app-nav { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 25px 17px 18px; border-right: 1px solid #e4e6df; background: #fafbf7; }

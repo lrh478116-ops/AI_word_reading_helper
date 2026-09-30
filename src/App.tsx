@@ -27,6 +27,7 @@ type ImportPhase = "idle" | "dragging" | "saving" | "uploading";
 const DOCUMENT_ACCEPT = ".txt,.md,.markdown,.docx,.pdf";
 const CONTACT_EMAIL = "2280810215@qq.com";
 const PUBLIC_SITE_URL = String(import.meta.env.VITE_AI_TIP_PUBLIC_SITE_URL || "https://lrh478116-ops.github.io/ai-tip-support-site").replace(/\/$/, "");
+const PRIVACY_CONSENT_KEY = "ai-tip-privacy-consent-v1";
 const SUPPORTED_DOCUMENT_EXTENSIONS = new Set(DOCUMENT_ACCEPT.split(","));
 
 function documentExtension(file: Pick<File, "name">) {
@@ -1284,8 +1285,25 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   );
 }
 
+function PrivacyConsentScreen({ onAccept }: { onAccept: () => void }) {
+  const { t } = useI18n();
+  return <main className="privacy-consent-shell" data-privacy-consent>
+    <section className="privacy-consent-card" aria-labelledby="privacy-consent-title">
+      <div className="privacy-consent-icon"><ShieldCheck size={25} /></div>
+      <p className="overline">AI TIP · PRIVACY</p>
+      <h1 id="privacy-consent-title">{t("privacyConsent.title")}</h1>
+      <p className="privacy-consent-copy">{t("privacyConsent.description")}</p>
+      <a className="privacy-consent-link" href={`${PUBLIC_SITE_URL}/privacy/`} target="_blank" rel="noreferrer" data-privacy-policy-link><FileText size={16} />{t("privacyConsent.readPolicy")}</a>
+      <button className="primary privacy-consent-accept" onClick={onAccept} data-accept-privacy><Check size={17} />{t("privacyConsent.accept")}</button>
+      <p className="privacy-consent-note">{t("privacyConsent.note")}</p>
+      <LanguageSelect className="auth-language" />
+    </section>
+  </main>;
+}
+
 function AppContent() {
   const { t } = useI18n();
+  const [privacyAccepted, setPrivacyAccepted] = useState(() => localStorage.getItem(PRIVACY_CONSENT_KEY) === "accepted");
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(Boolean(session.get()));
   const [screen, setScreen] = useState<Screen>({ type: "library", tab: "all" });
@@ -1367,9 +1385,11 @@ function AppContent() {
   }, [importDocuments, user]);
 
   useEffect(() => {
+    if (!privacyAccepted) return;
     if (!session.get()) return;
     api.me().then(({ user: current }) => setUser(current)).catch(() => session.clear()).finally(() => setChecking(false));
-  }, []);
+  }, [privacyAccepted]);
+  if (!privacyAccepted) return <PrivacyConsentScreen onAccept={() => { localStorage.setItem(PRIVACY_CONSENT_KEY, "accepted"); setPrivacyAccepted(true); }} />;
   if (checking) return <div className="loading-state fullscreen"><LoaderCircle className="spin" /><span>{t("app.entering")}</span></div>;
   if (!user) return <AuthScreen onAuth={setUser} />;
   const openLocalModels = () => {
