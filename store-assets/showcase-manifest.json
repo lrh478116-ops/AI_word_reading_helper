@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generatedAt": "2026-09-16T04:50:40.767Z",
+  "generatedAt": "2026-09-29T03:42:52.207Z",
   "platform": "win32",
   "sourceCommit": "59d6a01665fd8df1a0f69096286113218fb80478",
   "capturedAt": "2026-09-16T04:50:19.712Z",
@@ -12,12 +12,12 @@
     "src/App.tsx": "b68c04ac38e642c7a95b1889f5f6c6c7a5ed4936eadb8b971161c6f3fa939d6a",
     "scripts/capture-store-showcase.mjs": "1e4ad57de1f8807116dd26b61ed8dce8c25236eb5181348530c02d66eb3e53ea",
     "store-assets/metadata.json": "af279f204c6a13bff1cefea1f24a46fcfc42c55d903712cbaed00ccabe59cf55",
-    "scripts/render-store-showcase.mjs": "d6768e889d722cb263c4b6a17b99026d04693ef3b0e5f12b34a3e6a4ad2c7260"
+    "scripts/render-store-showcase.mjs": "a1ab66e7d61bfd23e680d655a88a5c60af376a44aca12bd3185ddfa2c8c094ee"
   },
   "artifacts": [
     {
       "file": "store-assets/showcase/zh-CN/01-source.png",
-      "sha256": "fec1a91cfce654626caa010d6b87c0435eb3c30b93fddafa1f920149ef92f769",
+      "sha256": "c2d1e5311857053e0c9371eb74095bae73edcbbb8aadd0e5b7b814779bd66d9e",
       "raw": "store-assets/raw/zh-CN/01-source.png",
       "rawSha256": "c453fff9c861312ada02796ef0433b83c75b5063eb1914fc2efad2371d235db0",
       "locale": "zh-CN",
@@ -29,7 +29,7 @@
     },
     {
       "file": "store-assets/showcase/zh-CN/02-follow-up.png",
-      "sha256": "5910e26543bea4c1402f43557d424df2c0f4e3c8601e582434b692f44f8d8287",
+      "sha256": "814cf3d4be1aa5ce55d08edf03a17a4bbb3dadd28c1bdc18d8c6a9762d2f6375",
       "raw": "store-assets/raw/zh-CN/02-follow-up.png",
       "rawSha256": "c06f7b93c13d67c28b793db58b2f39a062b865cf502afb3dd1e6809da8b668e6",
       "locale": "zh-CN",
@@ -41,7 +41,7 @@
     },
     {
       "file": "store-assets/showcase/zh-CN/03-tree.png",
-      "sha256": "93fc892d068e00a83c8f3067f63b857595b14a8ef120a5709d3c4f61034b317f",
+      "sha256": "4135c7123ffa9c862bbd37d484d779d701aeccc1cb019a1cc62f9cc7ed6d2e11",
       "raw": "store-assets/raw/zh-CN/03-tree.png",
       "rawSha256": "d2e1e8717baa839e78ad95817ef799e75bfb583f0cc45ea24cecf5471661a6c9",
       "locale": "zh-CN",
@@ -53,7 +53,7 @@
     },
     {
       "file": "store-assets/showcase/zh-CN/04-models.png",
-      "sha256": "c09dfc7e1c73f7310c89a46467a0b81c0d293ba2db05a49423bd2fe204c0a7c8",
+      "sha256": "8202fc99880f6473f1ef8fbe5dbc2084b235a44811ac7ea5f6047f7aa67aadb0",
       "raw": "store-assets/raw/zh-CN/04-models.png",
       "rawSha256": "80c9be57f80815bcd6ea8c793cd4d60822b1b906f180f9bcdd0990303079ac3e",
       "locale": "zh-CN",
@@ -65,7 +65,7 @@
     },
     {
       "file": "store-assets/showcase/en/01-source.png",
-      "sha256": "a5567b69cbcb688a88673c54bade520fb1487557192722fabf39534c13b59aaa",
+      "sha256": "eae966cb8ba8e796498ca7a4770866099faaf27eb87d17513a886b8ffef7e2db",
       "raw": "store-assets/raw/en/01-source.png",
       "rawSha256": "c84b6b41c135adc042c24de1f04cf4620a89152d7606b6878297a1a9532867f5",
       "locale": "en",
@@ -77,7 +77,7 @@
     },
     {
       "file": "store-assets/showcase/en/02-follow-up.png",
-      "sha256": "7c39e2605dcdf904149f0b04b732731fa8eee9996f415dca111a2eae4a7abb8f",
+      "sha256": "98d5807ad76a4cb8e4cd20b95defd71303f56e17e629695f3cb3fba351fff029",
       "raw": "store-assets/raw/en/02-follow-up.png",
       "rawSha256": "d1ee46474daff5ee05d1c4eb966ac7dbefcd9bda4da5ed72e792a71cbc5d3c13",
       "locale": "en",
@@ -89,7 +89,7 @@
     },
     {
       "file": "store-assets/showcase/en/03-tree.png",
-      "sha256": "a9307c138b7d12ab7154f0e8b8aa8642a9fbf1bbd2855dc5a48815d78ad043e0",
+      "sha256": "3cad7616cced72bf982ceade9b1fd76353e0a7867acfe0f5b0ed5ed6100610d8",
       "raw": "store-assets/raw/en/03-tree.png",
       "rawSha256": "9251b2fc91926a148e4dd9c5ba7a7f203d4b2d3f356d9ee7b57e5e0b6816c21a",
       "locale": "en",
@@ -101,7 +101,7 @@
     },
     {
       "file": "store-assets/showcase/en/04-models.png",
-      "sha256": "a03190cacc11f2e9ca6323e0df07699e6eb7634b6f0a5a36d556221f87e322a4",
+      "sha256": "680fab9a9bd025eedb55708ccf1bf9c9c22e4c0222655ad1d2adb78cb6c09e6d",
       "raw": "store-assets/raw/en/04-models.png",
       "rawSha256": "1457b50de3a790f63bed99f85f10a7ba9082c413819d3a6bb26426961aecfdc1",
       "locale": "en",
