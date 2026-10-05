@@ -11,10 +11,13 @@ import { chromiumNetFetch, chromiumProxyDescription } from "./chromium-net-fetch
 import { createRememberedLoginStore } from "./login-credentials.mjs";
 import { downloadOfficialOllamaInstaller, fetchLatestOllamaInstallerInfo, ollamaInstallerAssetName, ollamaInstallerStartUrl } from "./ollama-installer.mjs";
 import { isAllowedAppNavigation, isAllowedExternalUrl } from "./navigation-policy.mjs";
+import { ensurePrivacyConsent } from "./privacy-consent.mjs";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 let mainWindow = null;
+let privacyAccepted = false;
+let startupPending = true;
 let localServer = null;
 let localURL = null;
 let pythonCalculation = null;
@@ -76,6 +79,7 @@ async function bootSmokeModelServer() {
 }
 
 async function bootServer() {
+  if (!privacyAccepted) throw new Error('Privacy consent is required before starting the application');
   if (localURL) return localURL;
   process.env.AI_TIP_EMBEDDED = "1";
   process.env.AI_TIP_DESKTOP = "1";
@@ -132,6 +136,7 @@ async function bootServer() {
 }
 
 function installDesktopIpc() {
+  if (!privacyAccepted) throw new Error('Privacy consent is required before installing desktop capabilities');
   ipcMain.removeHandler("ai-tip:copy-text");
   ipcMain.handle("ai-tip:copy-text", async (_event, payload = {}) => {
     const value = String(payload?.value || "").slice(0, 10_000);
@@ -948,6 +953,22 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (process.argv.includes('--smoke-test')) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), 'ai-tip-desktop-smoke-'));
+  privacyAccepted = await ensurePrivacyConsent({
+    appRoot, dataDir: smokeDataDir || app.getPath('userData'), locale: app.getLocale(),
+    onReady: process.argv.includes('--smoke-test') ? async window => {
+      if (localServer || managedLocalRuntime || rememberedLoginStore || smokeModelServer) throw new Error('Business services started before privacy consent');
+      await window.webContents.executeJavaScript(`(async () => {
+        for (let i = 0; i < 200 && document.getElementById('consent-checkbox').disabled; i++) await new Promise(r => setTimeout(r, 50));
+        if (window.aiTipDesktop || !document.getElementById('accept').disabled || document.getElementById('consent-checkbox').checked) throw new Error('Privacy gate did not block business access');
+        if (!document.getElementById('policy').textContent.includes('Supabase')) throw new Error('Offline privacy policy not loaded');
+        document.getElementById('consent-checkbox').click();
+        document.getElementById('accept').click();
+      })()`);
+      console.log('Privacy gate smoke: offline policy displayed, business services blocked, consent explicitly clicked');
+    } : undefined,
+  });
+  if (!privacyAccepted) { app.quit(); return; }
   if (process.argv.includes('--cloud-connection-test')) {
     smokeDataDir ||= mkdtempSync(path.join(tmpdir(), 'ai-tip-cloud-connection-'));
     await bootServer();
@@ -979,16 +1000,18 @@ app.whenReady().then(async () => {
   installDesktopIpc();
   installMenu();
   await createWindow();
+  startupPending = false;
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
 }).catch((error) => {
   if (smokeResultPath) {
     try { writeFileSync(smokeResultPath, JSON.stringify({ ok: false, error: error instanceof Error ? error.stack || error.message : String(error) }), "utf8"); } catch {}
   }
   console.error(error);
+  if (!process.argv.includes('--smoke-test')) dialog.showErrorBox('AI Tip', `应用无法启动 / Unable to start\n${error instanceof Error ? error.message : String(error)}\n请重新安装或联系开发者 / Reinstall or contact: 2280810215@qq.com`);
   app.exit(1);
 });
 
-app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+app.on("window-all-closed", () => { if (!startupPending && process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
   if (smokeModelServer) { smokeModelServer.close(); smokeModelServer = null; smokeModelURL = ""; }
   localServer?.close();

@@ -74,7 +74,7 @@ const zh: Record<string, string> = {
   "tip.welcome": "当前 Tip 保持独立聊天；开启记忆时可参考本文其他 Tip 的摘要。", "tip.simple": "通俗解释", "tip.detailed": "详细解释", "tip.professional": "专业解释", "tip.example": "举个例子",
   "tip.followup": "继续追问…", "tip.sendHint": "Enter 发送 · Shift + Enter 换行", "tip.stop": "停止", "tip.webSearchOn": "联网开", "tip.webSearchOff": "联网关", "tip.webSearchHint": "与设置中的联网搜索总开关同步；关闭时不使用 Tavily、百科或网页检索", "tip.webSearchUpdating": "正在保存联网设置", "tip.webSearchUpdateFailed": "联网设置保存失败", "tip.resolved": "重新打开", "tip.resolve": "标记已解决", "tip.deleteConfirm": "删除这个 Tip、全部对话及其所有子 Tip？", "tip.sourceMessageMissing": "来源聊天消息已失效，请重新选择",
   "tip.treeButton": "Tip 树", "tip.treeKicker": "对话定位", "tip.treeTitle": "Tip 树状图", "tip.treeHint": "点击节点定位对话；直接修改名称并按 Enter 或移开焦点即可保存。", "tip.treeDocument": "原文档", "tip.treeLocate": "定位到这个对话", "tip.treeName": "对话名称",
-  "tip.open": "打开 Tip：{title}", "tip.fullPreview": "首次回答预览", "tip.collapse": "折叠 Tip", "tip.checkingTools": "正在核对工具结果…", "tip.toolsSummary": "工具调用 {count} 项", "tip.toolsWarnings": "{count} 项需注意",
+  "tip.open": "打开 Tip：{title}", "tip.fullPreview": "首次回答预览", "tip.collapse": "折叠 Tip", "tip.checkingTools": "正在核对工具结果…", "tip.toolsSummary": "处理与技能记录 {count} 项", "tip.toolsWarnings": "{count} 项需注意",
   "tip.modelRequiredTitle": "还没有可用的大模型", "tip.modelRequired": "未导入大模型 API。请在设置中导入大模型 API，或下载并连接本地模型。", "tip.modelChecking": "正在检查模型配置", "tip.modelCheckingHint": "正在确认当前设备是否有可用的云端或本地模型。", "tip.ollamaUnavailable": "已选择本地模型，但本机 Ollama 没有运行。请启动 Ollama，或改用云端模型 API。", "tip.localModelMissing": "设置中的本地模型没有出现在 Ollama 中，请重新下载或选择已安装模型。", "tip.configureApi": "前往设置", "tip.downloadLocal": "下载本地模型", "tip.modelRequiredPlaceholder": "配置大模型后即可追问", "app.entering": "正在进入 AI Tip…"
 };
 
@@ -148,11 +148,12 @@ const en: Record<string, string> = {
   "tip.welcome": "This Tip has its own chat. Enable memory to reference summaries from other Tips in this document.", "tip.simple": "Simple explanation", "tip.detailed": "Detailed explanation", "tip.professional": "Expert explanation", "tip.example": "Give an example",
   "tip.followup": "Ask a follow-up…", "tip.sendHint": "Enter to send · Shift + Enter for a new line", "tip.stop": "Stop", "tip.webSearchOn": "Web on", "tip.webSearchOff": "Web off", "tip.webSearchHint": "Synced with the Web search master switch in Settings. When off, Tavily, encyclopedia, and web searches are disabled", "tip.webSearchUpdating": "Saving web search setting", "tip.webSearchUpdateFailed": "Could not save web search setting", "tip.resolved": "Reopen", "tip.resolve": "Mark resolved", "tip.deleteConfirm": "Delete this Tip, its chat, and every child Tip?", "tip.sourceMessageMissing": "The source chat message is no longer available. Select it again.",
   "tip.treeButton": "Tip tree", "tip.treeKicker": "Conversation map", "tip.treeTitle": "Tip tree", "tip.treeHint": "Select a node to navigate. Edit its name and press Enter or move focus to save.", "tip.treeDocument": "Source document", "tip.treeLocate": "Go to this conversation", "tip.treeName": "Conversation name",
-  "tip.open": "Open Tip: {title}", "tip.fullPreview": "First answer preview", "tip.collapse": "Collapse Tip", "tip.checkingTools": "Checking tool results…", "tip.toolsSummary": "{count} tool activities", "tip.toolsWarnings": "{count} need attention",
+  "tip.open": "Open Tip: {title}", "tip.fullPreview": "First answer preview", "tip.collapse": "Collapse Tip", "tip.checkingTools": "Checking tool results…", "tip.toolsSummary": "{count} processing records", "tip.toolsWarnings": "{count} need attention",
   "tip.modelRequiredTitle": "No model is available yet", "tip.modelRequired": "No model API is configured. Add one in Settings or download and connect a local model.", "tip.modelChecking": "Checking model configuration", "tip.modelCheckingHint": "Confirming whether this device has an available cloud or local model.", "tip.ollamaUnavailable": "A local model is selected, but Ollama is not running. Start Ollama or configure a cloud model API.", "tip.localModelMissing": "The configured local model is not present in Ollama. Download it again or select an installed model.", "tip.configureApi": "Open Settings", "tip.downloadLocal": "Download local model", "tip.modelRequiredPlaceholder": "Configure a model to ask questions", "app.entering": "Opening AI Tip…"
 };
 
-const dictionaries: Record<Language, Record<string, string>> = { "zh-CN": zh, en };
+import { skillZh, skillEn } from './skill-i18n.ts';
+const dictionaries: Record<Language, Record<string, string>> = { "zh-CN": { ...zh, ...skillZh }, en: { ...en, ...skillEn } };
 
 export function normalizeLanguage(value: unknown): Language {
   return value === "en" ? "en" : "zh-CN";

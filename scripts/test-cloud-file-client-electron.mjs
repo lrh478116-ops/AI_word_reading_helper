@@ -16,6 +16,8 @@ const documents = new Map([
 const trace = [];
 const testProfile = await mkdtemp(path.join(os.tmpdir(), 'aitip-cloud-client-profile-'));
 app.setPath('userData', testProfile);
+// Cleanup must not make a failed assertion exit successfully before its catch.
+app.on('window-all-closed', () => {});
 
 function makeDocument(id, title) {
   return {
@@ -84,7 +86,8 @@ async function run() {
   const origin = `http://127.0.0.1:${port}`;
   await window.loadURL(origin);
   console.log("[cloud-client] initial page loaded");
-  await window.webContents.executeJavaScript(`localStorage.setItem('ai-tip-token', 'cloud-client-token'); localStorage.setItem('ai-tip-language', 'zh-CN'); true`);
+  if (process.env.AI_TIP_FORCE_CLOUD_UI_TEST_FAILURE === '1') throw new Error('Forced cloud client test failure');
+  await window.webContents.executeJavaScript(`localStorage.setItem('ai-tip-token', 'cloud-client-token'); localStorage.setItem('ai-tip-language', 'zh-CN'); document.querySelector('[data-accept-privacy]')?.click(); true`);
   const reloaded = new Promise((resolve, reject) => {
     window.webContents.once("did-finish-load", resolve);
     window.webContents.once("did-fail-load", (_event, code, description) => reject(new Error(`reload failed: ${code} ${description}`)));
@@ -132,11 +135,10 @@ async function run() {
     window.destroy();
     await rm(testProfile, { recursive: true, force: true }).catch(() => {});
     await new Promise(resolve => server.close(resolve));
-    app.quit();
   }
 }
 
-app.whenReady().then(run).catch(async (error) => {
+app.whenReady().then(run).then(() => app.exit(0)).catch(async (error) => {
   console.error(error);
   if (server.listening) await new Promise(resolve => server.close(resolve));
   app.exit(1);

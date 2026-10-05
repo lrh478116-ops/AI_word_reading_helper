@@ -1,0 +1,110 @@
+import { strict as assert } from 'node:assert';
+import { createServer } from 'node:http';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+const dir = await mkdtemp(path.join(os.tmpdir(), 'aitip-user-skills-api-'));
+Object.assign(process.env, { AI_TIP_EMBEDDED: '1', AI_TIP_DESKTOP: '1', AI_TIP_SUPABASE_ENABLED: '0', AI_TIP_DATA_DIR: dir });
+const inputs = []; let mode = 'normal', releaseHeld, heldStarted;
+const provider = createServer(async (req, res) => {
+  let raw = ''; for await (const chunk of req) raw += chunk;
+  const body = JSON.parse(raw); const system = body.messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
+  let content;
+  if (system.includes('PROFESSIONALISM_CLASSIFIER_V1')) content = JSON.stringify({ professional: false, level: 'general', score: 0, domain: 'general', requiresWebReview: false, confidence: 99, reason: 'Supplied prose.' });
+  else if (system.includes('WEB_SEARCH_DECISION_V1')) content = JSON.stringify({ required: true, confidence: 99, reason: 'Controlled search test.', queryZh: '阅读方法', queryEn: 'reading methods' });
+  else {
+    inputs.push(body);
+    if (mode === 'hold') { heldStarted?.(); await new Promise(r => { releaseHeld = r; }); }
+    if (mode === 'unauthorized') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'forbidden', type: 'function', function: { name: 'web_search', arguments: '{"query":"ignored"}' } }] }, finish_reason: 'tool_calls' }] })); return; }
+    content = mode === 'recovery' && !system.includes('SEARCH_FAILURE_DOCUMENT_RECOVERY_V1') ? 'I cannot answer because web search found no evidence.' : system.includes('Apply reference rule VIOLET-TEXT.') ? 'VIOLET-TEXT: a reference-informed explanation.' : system.includes('Use the phrase BLUE-LANTERN in your explanation.') ? 'BLUE-LANTERN: a structured reading explanation.' : system.includes('Use the phrase GREEN-LANTERN in your explanation.') ? 'GREEN-LANTERN: the revised reading explanation.' : 'An ordinary reading explanation.';
+  }
+  res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] }));
+});
+await new Promise(r => provider.listen(0, '127.0.0.1', r));
+const { startServer, configureExternalNetworkFetch } = await import('../dist-electron/server.cjs');
+let networkCalls = 0;
+configureExternalNetworkFetch(async () => { networkCalls++; return new Response(JSON.stringify({ results: [], keys: [{ usage: 0, limit: 100 }], account: { plan: 'free', usage: 0, limit: 100 } }), { headers: { 'content-type': 'application/json' } }); });
+let server = await startServer(0); let origin = `http://127.0.0.1:${server.address().port}/api`; let token;
+const request = async (url, init = {}, auth = token) => {
+  const response = await fetch(origin + url, { ...init, headers: { ...(init.body instanceof FormData ? {} : { 'content-type': 'application/json' }), ...(auth ? { authorization: `Bearer ${auth}` } : {}), ...init.headers } });
+  const text = await response.text(); assert.ok(response.ok, `${url} ${response.status}: ${text.slice(0, 200)}`); return JSON.parse(text);
+};
+try {
+  token = (await request('/auth/register', { method: 'POST', body: JSON.stringify({ name: 'Skill reader', email: 'reader@example.com', password: 'Password12345' }) })).token;
+  assert.deepEqual((await request('/skills')).skills, []);
+  assert.equal((await fetch(`${origin}/skills`)).status, 401);
+  const raw = '# Reading guide\nUse the phrase BLUE-LANTERN in your explanation.';
+  const upload = new FormData(); upload.append('file', new Blob([raw]), 'reading-guide.md');
+  const preview = (await request('/skills/preview', { method: 'POST', body: upload })).preview;
+  const chinese = new FormData(); chinese.append('file', new Blob(['# 阅读\n解释概念。']), '研究读法.md');
+  assert.equal((await request('/skills/preview', { method: 'POST', body: chinese })).preview.name, '研究读法');
+  const preservedText = '    Indented example\n\n```markdown\n[Example](references/not-real.md)\n```\nExplain carefully.\n';
+  const preserved = new FormData(); preserved.append('file', new Blob([preservedText]), 'examples.md');
+  assert.equal((await request('/skills/preview', { method: 'POST', body: preserved })).preview.instructions, preservedText);
+  assert.deepEqual((await request('/skills')).skills, [], 'Preview cannot save or enable');
+  let skill = (await request('/skills', { method: 'POST', body: JSON.stringify(preview) })).skill;
+  assert.equal(skill.enabled, false);
+  await request('/settings', { method: 'PUT', body: JSON.stringify({ provider: 'custom', baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: 'controlled-provider', model: 'fixture-model', pythonEnabled: false, reliabilityEnabled: false, webSearchEnabled: false }) });
+  const form = new FormData(); form.append('file', new Blob(['# Reading\nCarefully separate observations and assumptions.']), 'reading.md');
+  const { document } = await request('/documents/import', { method: 'POST', body: form });
+  const block = document.blocks.find(b => b.type === 'paragraph');
+  const { tip } = await request(`/documents/${document.id}/tips`, { method: 'POST', body: JSON.stringify({ blockId: block.id, selectedText: block.content, startOffset: 0, endOffset: block.content.length, prefixText: '', suffixText: '' }) });
+  const chat = async () => {
+    const response = await fetch(`${origin}/tips/${tip.id}/chat`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Explain this passage.', language: 'en' }) });
+    const events = (await response.text()).trim().split('\n').map(JSON.parse);
+    assert.ok(!events.some(e => e.type === 'error'), JSON.stringify(events));
+    assert.ok(events.some(e => e.type === 'done'));
+    const data = await request(`/documents/${document.id}`); return data.tips.find(t => t.id === tip.id).messages.at(-1);
+  };
+  assert.doesNotMatch((await chat()).content, /BLUE-LANTERN/);
+  skill = (await request(`/skills/${skill.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: true, signature: skill.signature }) })).skill;
+  const first = await chat(); assert.match(first.content, /BLUE-LANTERN/);
+  const trace = first.skills.find(s => s.name === 'user_skill'); assert.equal(trace.userSkill.signature, skill.signature); assert.equal(trace.userSkill.id, skill.id);
+  assert.match(inputs.at(-1).messages[0].content, /Use the phrase BLUE-LANTERN/);
+  assert.ok(inputs.at(-1).messages[0].content.includes(skill.id) && inputs.at(-1).messages[0].content.includes(skill.signature));
+  const oldSignature = skill.signature;
+  mode = 'hold'; const holdStarted = new Promise(r => { heldStarted = r; });
+  const ongoing = chat(); await holdStarted;
+  skill = (await request(`/skills/${skill.id}`, { method: 'PATCH', body: JSON.stringify({ instructions: 'Use the phrase GREEN-LANTERN in your explanation.', signature: skill.signature }) })).skill;
+  mode = 'normal'; releaseHeld(); const heldAnswer = await ongoing;
+  assert.match(heldAnswer.content, /BLUE-LANTERN/); assert.equal(heldAnswer.skills.find(s => s.name === 'user_skill').userSkill.signature, oldSignature, 'In-flight request retains its original snapshot');
+  assert.match((await chat()).content, /GREEN-LANTERN/);
+  skill = (await request(`/skills/${skill.id}`, { method: 'PATCH', body: JSON.stringify({ signature: skill.signature, instructions: 'Use the phrase GREEN-LANTERN in your explanation. Consult [guide](references/guide.md).', files: [{ path: 'references/guide.md', content: 'Apply reference rule VIOLET-TEXT.' }] }) })).skill;
+  assert.match((await chat()).content, /VIOLET-TEXT/);
+  assert.match(inputs.at(-1).messages[0].content, /Apply reference rule VIOLET-TEXT/);
+  skill = (await request(`/skills/${skill.id}`, { method: 'PATCH', body: JSON.stringify({ signature: skill.signature, files: [{ path: 'references/guide.md', content: 'No extra wording preference.' }] }) })).skill;
+  assert.match((await chat()).content, /GREEN-LANTERN/);
+  assert.doesNotMatch(inputs.at(-1).messages[0].content, /VIOLET-TEXT/);
+  assert.equal((await fetch(`${origin}/skills/${skill.id}`, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false, signature: oldSignature }) })).status, 409);
+  const other = await request('/auth/register', { method: 'POST', body: JSON.stringify({ name: 'Other', email: 'other@example.com', password: 'Password12345' }) });
+  assert.deepEqual((await request('/skills', {}, other.token)).skills, []);
+  assert.equal((await fetch(`${origin}/skills/${skill.id}`, { method: 'DELETE', headers: { authorization: `Bearer ${other.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ signature: skill.signature }) })).status, 404);
+  await new Promise(r => server.close(r)); server = await startServer(0); origin = `http://127.0.0.1:${server.address().port}/api`;
+  assert.equal((await request('/skills')).skills[0].signature, skill.signature);
+  const exported = await fetch(`${origin}/skills/${skill.id}/export`, { headers: { authorization: `Bearer ${token}` } }); assert.equal(exported.status, 200); assert.ok((await exported.arrayBuffer()).byteLength > 0);
+  // A Skill cannot turn on tools that the application has disabled.
+  const beforeUnauthorized = (await request(`/documents/${document.id}`)).tips[0].messages.filter(m => m.role === 'assistant').length;
+  mode = 'unauthorized';
+  const refused = await fetch(`${origin}/tips/${tip.id}/chat`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Explain the passage.', language: 'en' }) });
+  const refusedEvents = (await refused.text()).trim().split('\n').map(JSON.parse);
+  assert.ok(refusedEvents.some(e => e.type === 'error')); assert.ok(!refusedEvents.some(e => e.type === 'done')); assert.equal(networkCalls, 0);
+  assert.equal((await request(`/documents/${document.id}`)).tips[0].messages.filter(m => m.role === 'assistant').length, beforeUnauthorized);
+  mode = 'recovery'; await request('/settings', { method: 'PUT', body: JSON.stringify({ webSearchEnabled: true, searchApiKey: 'controlled-empty-search' }) });
+  const recovered = await chat(); assert.match(recovered.content, /GREEN-LANTERN/);
+  assert.ok(recovered.skills.some(s => s.name === 'search_failure_recovery'));
+  assert.ok(inputs.some(p => p.messages[0].content.includes('SEARCH_FAILURE_DOCUMENT_RECOVERY_V1') && p.messages[0].content.includes('Use the phrase GREEN-LANTERN')));
+  await request('/settings', { method: 'PUT', body: JSON.stringify({ webSearchEnabled: false }) }); mode = 'normal';
+  const stored = await readFile(path.join(dir, 'user-skills.json'), 'utf8');
+  const damaged = JSON.parse(stored); damaged.skills[0].instructions = 'Fabricated replacement.';
+  await writeFile(path.join(dir, 'user-skills.json'), JSON.stringify(damaged));
+  const invalid = await fetch(`${origin}/tips/${tip.id}/chat`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ question: 'Explain the passage.', language: 'en' }) });
+  assert.equal(invalid.status, 409); assert.equal((await invalid.json()).code, 'SKILL_INTEGRITY');
+  await writeFile(path.join(dir, 'user-skills.json'), stored);
+  skill = (await request(`/skills/${skill.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: false, signature: skill.signature }) })).skill;
+  assert.doesNotMatch(inputs.at(-1).messages[0].content, /UNUSED-NOISE/);
+  const disabled = await chat(); assert.doesNotMatch(inputs.at(-1).messages[0].content, /GREEN-LANTERN/); assert.ok(!disabled.skills.some(s => s.name === 'user_skill'));
+  await request(`/skills/${skill.id}`, { method: 'DELETE', body: JSON.stringify({ signature: skill.signature }) });
+  const afterDelete = await chat(); assert.ok(!afterDelete.skills.some(s => s.name === 'user_skill'));
+  const requestLineage = inputs.map((body, index) => ({ index, model: body.model, skillSnapshots: body.messages.filter(m => m.role === 'system').flatMap(m => m.content.split('\n').filter(line => line.startsWith('{"id":')).map(JSON.parse)), tools: (body.tools || []).map(t => t.function.name) }));
+  console.log(JSON.stringify({ evidence: 'COMPONENT_CAPABILITY', actualEntry: '/skills/preview -> /skills -> /skills/:id -> /tips/:id/chat', actualModelRequests: inputs.length, requestLineage, before: 'ordinary', enabled: first.content, disabled: disabled.content, recovered: recovered.content, id: trace.userSkill.id, signature: trace.userSkill.signature, negativeControls: ['unauthenticated', 'cross-account', 'preview-only', 'disabled', 'deleted', 'stale-signature', 'reference-only-edit', 'in-flight-edit', 'unauthorized-tool', 'search-recovery-bypass', 'fabricated-replacement'], realModelEvaluation: 'NOT_CAUSALLY_VERIFIED' }));
+} finally { provider.closeAllConnections(); server.closeAllConnections(); await Promise.all([new Promise(r => provider.close(r)), new Promise(r => server.close(r))]); await rm(dir, { recursive: true, force: true }); }

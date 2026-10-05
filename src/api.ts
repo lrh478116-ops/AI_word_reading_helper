@@ -4,9 +4,11 @@ import type { LocalModelCatalogItem, OllamaRuntimeInfo } from "./local-models";
 import { cloudErrorMessage } from './cloud-errors';
 import { isTipStage, type TipStage } from './tip-progress';
 import { LANGUAGE_STORAGE_KEY, normalizeLanguage } from './i18n';
+import type { SkillDraft, SkillFile, UserSkill } from './user-skills';
 
 const TOKEN_KEY = "ai-tip-token";
 const REFRESH_TOKEN_KEY = "ai-tip-refresh-token";
+const readLanguage = () => normalizeLanguage(localStorage.getItem(LANGUAGE_STORAGE_KEY));
 
 export interface AuthResult {
   token?: string;
@@ -94,6 +96,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  skills: () => request<{ skills: UserSkill[] }>(`/skills?language=${readLanguage()}`),
+  previewSkill: (file: File) => {
+    const body = new FormData(); body.append('file', file); body.append('language', readLanguage());
+    return request<{ preview: SkillDraft }>('/skills/preview', { method: 'POST', body });
+  },
+  previewSkillFolder: (files: SkillFile[]) => request<{ preview: SkillDraft }>('/skills/preview', { method: 'POST', body: JSON.stringify({ files, language: readLanguage() }) }),
+  createSkill: (skill: SkillDraft) => request<{ skill: UserSkill }>('/skills', { method: 'POST', body: JSON.stringify({ ...skill, language: readLanguage() }) }),
+  updateSkill: (id: string, patch: Partial<SkillDraft> & { enabled?: boolean; signature: string }) => request<{ skill: UserSkill }>(`/skills/${id}`, { method: 'PATCH', body: JSON.stringify({ ...patch, language: readLanguage() }) }),
+  deleteSkill: (id: string, signature: string) => request<{ deleted: boolean }>(`/skills/${id}`, { method: 'DELETE', body: JSON.stringify({ signature, language: readLanguage() }) }),
+  exportSkill: async (id: string) => {
+    const response = await authorizedFetch(`/api/skills/${id}/export?language=${readLanguage()}`);
+    if (!response.ok) { const body = await response.json(); throw new ApiError(body.error, response.status, body.code); }
+    return response.blob();
+  },
   register: (name: string, email: string, password: string) =>
     request<AuthResult>("/auth/register", {
       method: "POST",

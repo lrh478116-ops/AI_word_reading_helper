@@ -1,0 +1,35 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #303a31; background: #f6f7f2; font-size: 15px; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.consent-shell { max-width: 1040px; height: 100dvh; margin: auto; padding: 26px 32px; display: flex; flex-direction: column; gap: 12px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.brand { color: #607057; font-weight: 700; letter-spacing: 2px; }
+h1 { font-size: clamp(21px, 3vw, 28px); margin: 7px 0 0; }
+p { line-height: 1.65; margin: 0; }
+#intro, #local-note { color: #687267; }
+.language-label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+select, button { font: inherit; color: inherit; border: 1px solid #cbd1c5; border-radius: 9px; background: #fff; padding: 10px 14px; }
+.policy { flex: 1; min-height: 80px; overflow: auto; overscroll-behavior: contain; background: #fff; border: 1px solid #dce1d6; border-radius: 12px; padding: 22px; line-height: 1.8; }
+.policy h1 { margin: 0 0 10px; font-size: 24px; }
+.policy h2 { font-size: 18px; margin: 24px 0 8px; }
+.policy p { margin: 10px 0; }
+.policy table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; overflow-wrap: anywhere; }
+.policy td, .policy th { border: 1px solid #dce1d6; padding: 8px; text-align: left; vertical-align: top; }
+.policy th:first-child, .policy th:last-child { width: 23%; }
+.policy a { color: #486245; overflow-wrap: anywhere; }
+.policy .meta, .policy .notice { font-size: 13px; color: #687267; }
+[data-lang="en"] { display: none; }
+html[lang="en"] [data-lang="zh"] { display: none; }
+html[lang="en"] [data-lang="en"] { display: block; }
+footer { flex: none; }
+.check { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
+input[type="checkbox"] { accent-color: #5c7053; width: 19px; height: 19px; flex: none; }
+#local-note { margin: 5px 0; font-size: 12px; }
+#error { color: #ac3830; font-size: 13px; }
+#error:empty { display: none; }
+.actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px; }
+button { cursor: pointer; min-height: 42px; }
+button.primary { color: white; background: #5c7053; border-color: #5c7053; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+:focus-visible { outline: 3px solid #7d9670; outline-offset: 3px; }
+@media (max-width: 620px), (max-height: 650px) { .consent-shell { padding: 14px 18px; gap: 8px; } .policy { padding: 14px; } h1 { font-size: 21px; } }

@@ -33,4 +33,12 @@ Reading and importing do not require a model API. AI replies require a working A
 
 Available in Simplified Chinese and English. Windows desktop builds and a Mac App Store build configuration are included; this is not a claim of App Store availability.
 
+## Bring your own reading Skills
+
+Open **Skills** in the library sidebar, or **AI settings → Manage Skills** while reading. Import `SKILL.md`, ordinary Markdown, a single-Skill ZIP or a folder. Preview before saving, then search, enable/disable, edit text references, export or delete Skills. The manager keeps the current document mounted.
+
+The **Skills** button beside the chat composer offers an independent switch for each Skill. Choices are synchronized with the manager and apply to the next question after saving. An answer already generating retains its starting configuration.
+
+Skills stay on this device and are separated by account. Imports start disabled. Enabled instructions and bundled text are included in subsequent Tip model requests, with a revision record on the answer. Online providers receive that enabled content; local models process it through the local interface. Imported scripts and binary resources are not supported, and Skills cannot override the application's tool permissions. See the [Skill guide](docs/user-skills.md).
+
 Screenshots show the real client with original example documents and authored demonstration responses. They were captured on Windows and are **not submission-ready Mac screenshots or model-quality evidence**. Mac submission requires recapture and testing of the signed candidate. See the [Chinese developer guide](README.md#开发与实现说明) for build instructions, implementation details and limitations.

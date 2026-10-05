@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>AI Tip · 隐私政策 / Privacy policy</title>
+  <link rel="stylesheet" href="privacy-consent.css">
+  <script src="privacy-consent-renderer.js" defer></script>
+</head>
+<body>
+  <main class="consent-shell">
+    <header><div><span class="brand">AI Tip</span><h1 id="title">使用前，请阅读隐私政策</h1></div><label class="language-label">language<select id="language" aria-label="language"><option value="zh-CN">简体中文</option><option value="en">English</option></select></label></header>
+    <p id="intro">同意后才能进入登录或仅本地使用。拒绝将退出应用。</p>
+    <section id="policy" class="policy" tabindex="0" aria-label="隐私政策 / Privacy policy" aria-busy="true"></section>
+    <footer>
+      <label class="check"><input id="consent-checkbox" type="checkbox" disabled><span id="agreement">我已阅读并同意 AI Tip 隐私政策</span></label>
+      <p id="local-note">同意记录仅保存在本机；同意不会开启云端上传或联网搜索。</p>
+      <p id="error" role="alert" aria-live="assertive"></p>
+      <div class="actions"><button id="reject" type="button">不同意并退出</button><button id="accept" class="primary" type="button" disabled>同意并继续</button></div>
+    </footer>
+  </main>
+</body>
+</html>

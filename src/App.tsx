@@ -4,7 +4,7 @@ import {
   CircleHelp, Clock3, Cloud, CloudOff, Copy, Cpu, Download, FileCode2, FileText, Folder, HardDrive, Heart, Highlighter,
   GitBranch, Globe2, Languages, Library, LoaderCircle, LogOut, Mail, Menu, MessageCircleMore, PanelLeftClose,
   PanelRightClose, Plus, RefreshCw, Search, Send, Settings, ShieldCheck, Sparkles, Square, Star, Trash2,
-  Upload, WandSparkles, X, Zap
+  Upload, WandSparkles, X, Zap, Puzzle
 } from "lucide-react";
 import { ApiError, api, session } from "./api";
 import { cloudErrorMessage } from './cloud-errors';
@@ -14,6 +14,8 @@ import { normalizeLanguage, readStoredLanguage, storeLanguage, translate, type L
 import { resolveSystemPrompt } from "./prompts";
 import { PdfPreview } from "./PdfPreview";
 import { TipMarkerButton } from "./TipMarkerButton";
+import { SkillManager } from './SkillManager';
+import { SkillPicker } from './SkillPicker';
 import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
 import type { AiRuntimeStatus, AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, CloudUsage, DocumentBlock, DocumentItem, PdfSelectionInfo, PdfTableData, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import type { LocalModelCatalogItem, OllamaRuntimeInfo } from "./local-models";
@@ -418,7 +420,7 @@ function LocalModelsScreen({ onBack, onConnected }: { onBack: () => void; onConn
   </main>;
 }
 
-function SettingsModal({ user, onClose, onOpenLocalModels, onSaved, onAccountDeleted }: { user: User; onClose: () => void; onOpenLocalModels: () => void; onSaved: () => void; onAccountDeleted: () => void }) {
+function SettingsModal({ user, onClose, onOpenLocalModels, onOpenSkills, onSaved, onAccountDeleted }: { user: User; onClose: () => void; onOpenLocalModels: () => void; onOpenSkills: () => void; onSaved: () => void; onAccountDeleted: () => void }) {
   const { language, t } = useI18n();
   const languageRef = useRef(language);
   const [saved, setSaved] = useState<AiSettings | null>(null);
@@ -509,6 +511,7 @@ function SettingsModal({ user, onClose, onOpenLocalModels, onSaved, onAccountDel
         {saved?.apiKeyConfigured && <label className="clear-key"><input type="checkbox" checked={Boolean(draft.clearApiKey)} onChange={(event) => setDraft({ ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey })} />{t("settings.removeKey")}</label>}
         <label>{t("settings.systemPrompt")}<textarea rows={8} value={draft.systemPrompt} onChange={(event) => setDraft({ ...draft, systemPrompt: event.target.value })} placeholder={t("settings.promptPlaceholder")} /><small>{draft.systemPrompt.length} / 12000</small></label>
         <div className="skill-settings">
+          <div className="skill-setting-row skill-manager-entry"><span className="skill-setting-icon"><Puzzle size={17} /></span><div><strong>{t('skills.title')}</strong><small>{t('skills.settingsHint')}</small></div><button className="secondary compact" data-open-skills onClick={onOpenSkills}>{t('skills.nav')}</button></div>
           <div className="skill-setting-row"><span className="skill-setting-icon"><Globe2 size={17} /></span><div><strong>{t("settings.webSearch")}</strong><small>{t("settings.webSearchHint")}</small></div><button className={`toggle ${draft.webSearchEnabled ? "on" : ""}`} onClick={() => setDraft({ ...draft, webSearchEnabled: !draft.webSearchEnabled })} aria-pressed={draft.webSearchEnabled}><i /></button></div>
           {draft.webSearchEnabled && <label>{t("settings.searchKey")}<input type="password" value={draft.searchApiKey || ""} onChange={(event) => setDraft({ ...draft, searchApiKey: event.target.value, clearSearchApiKey: false })} placeholder={saved?.searchApiKeyConfigured ? t("settings.savedKey", { mask: saved.searchApiKeyMasked }) : t("settings.enterSearchKey")} /></label>}
           {draft.webSearchEnabled && <label>{t("settings.searchBudget")}<select value={draft.searchBudgetMode} onChange={(event) => setDraft({ ...draft, searchBudgetMode: event.target.value as "free" | "quality" })}><option value="free">{t("settings.freeBudget")}</option><option value="quality">{t("settings.qualityBudget")}</option></select></label>}
@@ -534,10 +537,10 @@ function SettingsModal({ user, onClose, onOpenLocalModels, onSaved, onAccountDel
 
 interface NavProps {
   user: User; tab: "all" | "favorites" | "trash"; counts: { all: number; favorite: number; trash: number };
-  onTab: (tab: "all" | "favorites" | "trash") => void; onNew: () => void; onUpload: () => void; onLogout: () => void; onSettings: () => void;
+  onTab: (tab: "all" | "favorites" | "trash") => void; onNew: () => void; onUpload: () => void; onLogout: () => void; onSettings: () => void; onSkills: () => void;
 }
 
-function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSettings }: NavProps) {
+function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSettings, onSkills }: NavProps) {
   const { t } = useI18n();
   const [contactCopyState, setContactCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyContact = async () => {
@@ -573,6 +576,7 @@ function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSetting
         <button className={tab === "favorites" ? "active" : ""} onClick={() => onTab("favorites")}><Star size={18} />{t("nav.favorites")}<span>{counts.favorite}</span></button>
         <button><Clock3 size={18} />{t("nav.recent")}</button>
         <p className="nav-label second">{t("nav.manage")}</p>
+        <button data-open-skills onClick={onSkills}><Puzzle size={18} />{t('skills.nav')}</button>
         <button><Folder size={18} />{t("nav.folders")}<Plus size={14} className="nav-add" /></button>
         <button className={tab === "trash" ? "active" : ""} onClick={() => onTab("trash")}><Trash2 size={18} />{t("nav.trash")}<span>{counts.trash}</span></button>
       </nav>
@@ -590,9 +594,9 @@ function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSetting
   );
 }
 
-interface LibraryProps { user: User; screen: Extract<Screen, { type: "library" }>; onScreen: (screen: Screen) => void; onUpload: () => void; onLogout: () => void; onSettings: () => void; }
+interface LibraryProps { user: User; screen: Extract<Screen, { type: "library" }>; onScreen: (screen: Screen) => void; onUpload: () => void; onLogout: () => void; onSettings: () => void; onSkills: () => void; }
 
-function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings }: LibraryProps) {
+function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings, onSkills }: LibraryProps) {
   const { language, t } = useI18n();
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [trash, setTrash] = useState<DocumentItem[]>([]);
@@ -651,11 +655,11 @@ function LibraryScreen({ user, screen, onScreen, onUpload, onLogout, onSettings 
 
   return (
     <div className="app-layout">
-      <AppNav user={user} tab={screen.tab} counts={{ all: documents.length, favorite: documents.filter((d) => d.favorite).length, trash: trash.length }} onTab={(tab) => onScreen({ type: "library", tab })} onNew={() => void create()} onUpload={onUpload} onLogout={onLogout} onSettings={onSettings} />
+      <AppNav user={user} tab={screen.tab} counts={{ all: documents.length, favorite: documents.filter((d) => d.favorite).length, trash: trash.length }} onTab={(tab) => onScreen({ type: "library", tab })} onNew={() => void create()} onUpload={onUpload} onLogout={onLogout} onSettings={onSettings} onSkills={onSkills} />
       <main className="library-main">
         <header className="library-header">
           <div><p className="overline">{t("library.space")}</p><h1>{title}</h1><p>{screen.tab === "trash" ? t("library.trashDescription") : user.authMode === "supabase" ? t("cloud.localOnlyHint") : t("library.description")}</p>{user.authMode === "supabase" && <p className="cloud-usage"><Cloud size={13} />{cloudUsage ? t("cloud.usage", { used: (cloudUsage.usedBytes / 1048576).toFixed(2) }) : t("cloud.quota")}</p>}</div>
-          <div className="header-actions"><button className="secondary" onClick={onUpload}><Upload size={17} />{t("nav.import")}</button><button className="primary" onClick={() => void create()}><Plus size={17} />{t("nav.new")}</button></div>
+          <div className="header-actions"><button className="icon-button skills-mobile-entry" data-open-skills onClick={onSkills} aria-label={t('skills.title')} title={t('skills.title')}><Puzzle size={17} /></button><button className="secondary" onClick={onUpload}><Upload size={17} />{t("nav.import")}</button><button className="primary" onClick={() => void create()}><Plus size={17} />{t("nav.new")}</button></div>
         </header>
         <section className="library-toolbar">
           <div className="search-box"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("library.search")} />{query && <button onClick={() => setQuery("")}><X size={15} /></button>}</div>
@@ -944,17 +948,18 @@ function SkillResults({ skills }: { skills?: SkillTrace[] }) {
   </details>;
 }
 
-interface TipPanelProps { progressStage: TipStage; tip: TipThread; childTips: TipThread[]; modelStatus: AiRuntimeStatus | null; webSearchEnabled: boolean | null; webSearchBusy: boolean; streamingText: string; streamingSkills: SkillTrace[]; isStreaming: boolean; error: string; contextMode?: boolean; onSend: (question: string) => void; onStop: () => void; onToggleWebSearch: () => void; onCollapse: () => void; onFocus?: () => void; onResolve: () => void; onDelete: () => void; onToggleMemory: () => void; onMessageSelection: (selection: ChatSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; onOpenSettings: () => void; onOpenLocalModels: () => void; }
-function TipPanel({ progressStage, tip, childTips, modelStatus, webSearchEnabled, webSearchBusy, streamingText, streamingSkills, isStreaming, error, contextMode = false, onSend, onStop, onToggleWebSearch, onCollapse, onFocus, onResolve, onDelete, onToggleMemory, onMessageSelection, onOpenTip, onOpenSettings, onOpenLocalModels }: TipPanelProps) {
+interface TipPanelProps { progressStage: TipStage; tip: TipThread; childTips: TipThread[]; modelStatus: AiRuntimeStatus | null; webSearchEnabled: boolean | null; webSearchBusy: boolean; streamingText: string; streamingSkills: SkillTrace[]; isStreaming: boolean; error: string; contextMode?: boolean; onSend: (question: string) => void; onStop: () => void; onToggleWebSearch: () => void; onCollapse: () => void; onFocus?: () => void; onResolve: () => void; onDelete: () => void; onToggleMemory: () => void; onMessageSelection: (selection: ChatSelectionInfo) => void; onOpenTip: (tip: TipThread) => void; onOpenSettings: () => void; onOpenLocalModels: () => void; onOpenSkills: () => void; }
+function TipPanel({ progressStage, tip, childTips, modelStatus, webSearchEnabled, webSearchBusy, streamingText, streamingSkills, isStreaming, error, contextMode = false, onSend, onStop, onToggleWebSearch, onCollapse, onFocus, onResolve, onDelete, onToggleMemory, onMessageSelection, onOpenTip, onOpenSettings, onOpenLocalModels, onOpenSkills }: TipPanelProps) {
   const { language, t } = useI18n();
   const [question, setQuestion] = useState("");
+  const [skillSaving, setSkillSaving] = useState(false);
   const messageListRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const messageList = messageListRef.current;
     if (messageList) messageList.scrollTop = messageList.scrollHeight;
   }, [tip.id, tip.messages.length, streamingText]);
   const modelReady = modelStatus?.configured === true;
-  const submit = () => { if (!question.trim() || isStreaming || !modelReady) return; onSend(question.trim()); setQuestion(""); };
+  const submit = () => { if (!question.trim() || isStreaming || skillSaving || !modelReady) return; onSend(question.trim()); setQuestion(""); };
   const prompts = language === "en"
     ? [
       ["tip.simple", "Explain this passage in plain language."],
@@ -973,7 +978,7 @@ function TipPanel({ progressStage, tip, childTips, modelStatus, webSearchEnabled
       <header className="tip-head"><div><span className="tip-kicker"><Sparkles size={13} />{contextMode ? t("tip.parentConversation") : t("tip.independent")}</span><h2>{tip.title}</h2></div>{contextMode ? <button className="icon-button" onClick={onFocus} title={t("tip.focusConversation")}><ChevronLeft size={18} /></button> : <button className="icon-button" onClick={onCollapse} title={t("tip.collapse")}><PanelRightClose size={18} /></button>}</header>
       <div className="selected-quote"><p>{tip.anchorType === "message" ? t("tip.selectedChat") : tip.anchorType === "pdf" ? t("tip.selectedPdf", { page: tip.pdfAnchor?.pageNumber || 1 }) : t("tip.selected")}</p><blockquote>{tip.selectedText}</blockquote><div className="tip-context-controls"><span className={`anchor-badge ${tip.anchorStatus}`}>{tip.anchorStatus === "valid" ? t("tip.anchorValid") : tip.anchorStatus === "recovered" ? t("tip.anchorRecovered") : t("tip.anchorLost")}</span><button className={tip.memoryEnabled === false ? "" : "active"} onClick={onToggleMemory} title={t("tip.memoryHint")}><Brain size={12} />{tip.memoryEnabled === false ? t("tip.memoryOff") : t("tip.memoryOn")}</button></div></div>
       <div ref={messageListRef} className="message-list">
-        {tip.messages.length === 0 && !streamingText && modelReady && <div className="tip-welcome"><div><WandSparkles size={20} /></div><h3>{t("tip.start")}</h3><p>{t("tip.welcome")}</p><div className="tip-prompts">{prompts.map(([key, prompt]) => <button key={key} onClick={() => onSend(prompt)}>{t(key)}</button>)}</div></div>}
+        {tip.messages.length === 0 && !streamingText && modelReady && <div className="tip-welcome"><div><WandSparkles size={20} /></div><h3>{t("tip.start")}</h3><p>{t("tip.welcome")}</p><div className="tip-prompts">{prompts.map(([key, prompt]) => <button key={key} disabled={skillSaving} onClick={() => onSend(prompt)}>{t(key)}</button>)}</div></div>}
         {tip.messages.map((message) => <div className={`message ${message.role}`} key={message.id} data-message-id={message.id}>{message.role === "assistant" && <span className="assistant-mark"><Sparkles size={13} /></span>}<div>{message.role === "assistant" && <SkillResults skills={message.skills} />}<MessageContent tip={tip} message={message} childTips={childTips} onSelection={onMessageSelection} onOpenTip={onOpenTip} />{message.role === "assistant" && <button className="copy-message" onClick={() => void navigator.clipboard.writeText(message.content)}><Copy size={13} />{t("common.copy")}</button>}</div></div>)}
         {isStreaming && <div className="message assistant"><span className="assistant-mark"><Sparkles size={13} /></span><div><SkillResults skills={streamingSkills} /><TipProgress stage={progressStage} language={language} />{streamingText ? renderMessage(streamingText) : streamingSkills.length ? <span className="tool-thinking">{t("tip.checkingTools")}</span> : <span className="thinking"><i /><i /><i /></span>}<span className="cursor" /></div></div>}
         {error && <div className="chat-error"><CircleHelp size={15} />{error}</div>}
@@ -982,7 +987,7 @@ function TipPanel({ progressStage, tip, childTips, modelStatus, webSearchEnabled
       </div>
       <div className="tip-composer">
         <textarea disabled={!modelReady} value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} placeholder={modelReady ? t("tip.followup") : t("tip.modelRequiredPlaceholder")} rows={3} />
-        <div><span>{t("tip.sendHint")}</span><div className="tip-composer-actions"><button className={`composer-web-search ${webSearchEnabled ? "on" : "off"}`} data-chat-web-search-toggle aria-pressed={webSearchEnabled === true} disabled={webSearchEnabled === null || webSearchBusy || isStreaming} onClick={onToggleWebSearch} title={webSearchBusy ? t("tip.webSearchUpdating") : t("tip.webSearchHint")}><Globe2 size={13} /><span>{webSearchEnabled ? t("tip.webSearchOn") : t("tip.webSearchOff")}</span><i /></button>{isStreaming ? <button className="stop-button" onClick={onStop}><Square size={13} fill="currentColor" />{t("tip.stop")}</button> : <button className="send-button" disabled={!question.trim() || !modelReady} onClick={submit}><Send size={15} /></button>}</div></div>
+        <div><span>{t("tip.sendHint")}</span><div className="tip-composer-actions"><SkillPicker language={language} disabled={isStreaming} onManage={onOpenSkills} onBusyChange={setSkillSaving} /><button className={`composer-web-search ${webSearchEnabled ? "on" : "off"}`} data-chat-web-search-toggle aria-pressed={webSearchEnabled === true} disabled={webSearchEnabled === null || webSearchBusy || isStreaming} onClick={onToggleWebSearch} title={webSearchBusy ? t("tip.webSearchUpdating") : t("tip.webSearchHint")}><Globe2 size={13} /><span>{webSearchEnabled ? t("tip.webSearchOn") : t("tip.webSearchOff")}</span><i /></button>{isStreaming ? <button className="stop-button" onClick={onStop}><Square size={13} fill="currentColor" />{t("tip.stop")}</button> : <button className="send-button" disabled={!question.trim() || !modelReady || skillSaving} onClick={submit}><Send size={15} /></button>}</div></div>
       </div>
       {!contextMode && <footer className="tip-actions"><button onClick={onResolve}><CheckCircle2 size={15} />{tip.status === "resolved" ? t("tip.resolved") : t("tip.resolve")}</button><button className="danger-text" onClick={onDelete}><Trash2 size={15} />{t("common.delete")}</button></footer>}
     </aside>
@@ -997,8 +1002,8 @@ function SaveIndicator({ state }: { state: SaveState }) {
   return <span className="save-state"><Check size={14} />{t("save.saved")}</span>;
 }
 
-interface EditorProps { id: string; cloudEnabled: boolean; settingsRevision: number; onBack: () => void; onSettings: () => void; onOpenLocalModels: () => void; onRegisterSave: (save: (() => Promise<void>) | null) => void; }
-function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, onOpenLocalModels, onRegisterSave }: EditorProps) {
+interface EditorProps { id: string; cloudEnabled: boolean; settingsRevision: number; onBack: () => void; onSettings: () => void; onOpenLocalModels: () => void; onOpenSkills: () => void; onRegisterSave: (save: (() => Promise<void>) | null) => void; }
+function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, onOpenLocalModels, onOpenSkills, onRegisterSave }: EditorProps) {
   const { language, t } = useI18n();
   const [preparation, setPreparation] = useState('');
   const [documentItem, setDocumentItem] = useState<DocumentItem | null>(null);
@@ -1245,7 +1250,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
     onCollapse={() => collapseTip(tip)} onFocus={() => openTip(tip)}
     onResolve={() => void patchTip(tip.id, { status: tip.status === "resolved" ? "open" : "resolved" })}
     onDelete={() => void deleteTip(tip.id)} onToggleMemory={() => void patchTip(tip.id, { memoryEnabled: tip.memoryEnabled === false })}
-    onMessageSelection={setSelection} onOpenTip={openTip} onOpenSettings={onSettings} onOpenLocalModels={onOpenLocalModels}
+    onMessageSelection={setSelection} onOpenTip={openTip} onOpenSettings={onSettings} onOpenLocalModels={onOpenLocalModels} onOpenSkills={onOpenSkills}
   />;
   return (
     <div className={`editor-shell ${activeTip ? "with-tip" : ""} ${!navOpen ? "nav-hidden" : ""}`} data-editor-document={documentItem.id}>
@@ -1302,12 +1307,13 @@ function PrivacyConsentScreen({ onAccept }: { onAccept: () => void }) {
 }
 
 function AppContent() {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [privacyAccepted, setPrivacyAccepted] = useState(() => localStorage.getItem(PRIVACY_CONSENT_KEY) === "accepted");
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(Boolean(session.get()));
   const [screen, setScreen] = useState<Screen>({ type: "library", tab: "all" });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [localModelsOpen, setLocalModelsOpen] = useState(false);
   const [settingsRevision, setSettingsRevision] = useState(0);
   const [importPhase, setImportPhase] = useState<ImportPhase>("idle");
@@ -1347,6 +1353,8 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) return;
+    // The Skill manager owns file drops while open. Keep the document editor mounted.
+    if (skillsOpen) return;
     const containsFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types || []).includes("Files");
     const dragEnter = (event: DragEvent) => {
       if (!containsFiles(event)) return;
@@ -1382,7 +1390,7 @@ function AppContent() {
       window.removeEventListener("drop", drop, true);
       dragDepthRef.current = 0;
     };
-  }, [importDocuments, user]);
+  }, [importDocuments, user, skillsOpen]);
 
   useEffect(() => {
     if (!privacyAccepted) return;
@@ -1402,9 +1410,10 @@ function AppContent() {
   return <>
     <input ref={fileInputRef} data-global-document-input type="file" accept={DOCUMENT_ACCEPT} multiple hidden onChange={(event) => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ""; void importDocuments(files); }} />
     {localModelsOpen ? <LocalModelsScreen onBack={() => setLocalModelsOpen(false)} onConnected={() => setSettingsRevision((value) => value + 1)} /> : screen.type === "editor"
-    ? <EditorScreen id={screen.id} cloudEnabled={user.authMode === "supabase"} settingsRevision={settingsRevision} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onOpenLocalModels={openLocalModels} onRegisterSave={registerSave} />
-    : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onUpload={() => fileInputRef.current?.click()} onLogout={() => { session.clear(); setSettingsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} />}
-    {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onOpenLocalModels={openLocalModels} onSaved={() => setSettingsRevision((value) => value + 1)} onAccountDeleted={() => { session.clear(); setSettingsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} />}
+    ? <EditorScreen id={screen.id} cloudEnabled={user.authMode === "supabase"} settingsRevision={settingsRevision} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onOpenLocalModels={openLocalModels} onOpenSkills={() => setSkillsOpen(true)} onRegisterSave={registerSave} />
+    : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onUpload={() => fileInputRef.current?.click()} onLogout={() => { session.clear(); setSettingsOpen(false); setSkillsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} onSkills={() => setSkillsOpen(true)} />}
+    {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onOpenLocalModels={openLocalModels} onOpenSkills={() => setSkillsOpen(true)} onSaved={() => setSettingsRevision((value) => value + 1)} onAccountDeleted={() => { session.clear(); setSettingsOpen(false); setSkillsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} />}
+    {skillsOpen && <SkillManager language={language} onClose={() => setSkillsOpen(false)} />}
     {importPhase !== "idle" && <div className={`document-drop-overlay ${importPhase}`} data-import-phase={importPhase}><div>{importPhase === "uploading" || importPhase === "saving" ? <LoaderCircle className="spin" size={28} /> : <Upload size={28} />}<h2>{importPhase === "dragging" ? t("import.dropTitle") : importPhase === "saving" ? t("import.saving") : t("import.uploading")}</h2><p>{importPhase === "dragging" ? t("import.dropHint") : t("import.wait")}</p></div></div>}
     {importError && <div className="global-import-error" data-import-error><CircleHelp size={16} /><span>{importError}</span><button onClick={() => setImportError("")}><X size={14} /><span className="sr-only">{t("common.close")}</span></button></div>}
   </>;
