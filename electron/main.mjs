@@ -999,9 +999,8 @@ app.whenReady().then(async () => {
   if (process.argv.includes("--smoke-test")) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), "ai-tip-desktop-smoke-"));
   installDesktopIpc();
   installMenu();
-  await createWindow();
   startupPending = false;
-  app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) void createWindow(); });
+  await createWindow();
 }).catch((error) => {
   if (smokeResultPath) {
     try { writeFileSync(smokeResultPath, JSON.stringify({ ok: false, error: error instanceof Error ? error.stack || error.message : String(error) }), "utf8"); } catch {}
@@ -1011,7 +1010,7 @@ app.whenReady().then(async () => {
   app.exit(1);
 });
 
-app.on("window-all-closed", () => { if (!startupPending && process.platform !== "darwin") app.quit(); });
+app.on("window-all-closed", () => { if (!startupPending) app.quit(); });
 app.on("before-quit", () => {
   if (smokeModelServer) { smokeModelServer.close(); smokeModelServer = null; smokeModelURL = ""; }
   localServer?.close();
