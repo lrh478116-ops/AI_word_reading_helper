@@ -16,6 +16,7 @@ import { PdfPreview } from "./PdfPreview";
 import { TipMarkerButton } from "./TipMarkerButton";
 import { SkillManager } from './SkillManager';
 import { SkillPicker } from './SkillPicker';
+import { BUILD_POLICY, LOCAL_EDITION } from './edition';
 import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
 import type { AiRuntimeStatus, AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, CloudUsage, DocumentBlock, DocumentItem, PdfSelectionInfo, PdfTableData, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import type { LocalModelCatalogItem, OllamaRuntimeInfo } from "./local-models";
@@ -424,7 +425,7 @@ function SettingsModal({ user, onClose, onOpenLocalModels, onOpenSkills, onSaved
   const { language, t } = useI18n();
   const languageRef = useRef(language);
   const [saved, setSaved] = useState<AiSettings | null>(null);
-  const [draft, setDraft] = useState<AiSettingsInput>({ provider: "openai", baseURL: "", model: "", systemPrompt: "", webSearchEnabled: false, searchBudgetMode: "free", pythonEnabled: true, reliabilityEnabled: true });
+  const [draft, setDraft] = useState<AiSettingsInput>({ provider: LOCAL_EDITION ? 'local' : "openai", baseURL: "", model: "", systemPrompt: "", webSearchEnabled: false, searchBudgetMode: "free", pythonEnabled: true, reliabilityEnabled: true });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<"save" | "test" | "">("");
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
@@ -432,7 +433,7 @@ function SettingsModal({ user, onClose, onOpenLocalModels, onOpenSkills, onSaved
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [modelsBusy, setModelsBusy] = useState(false);
-  const providerOptions = Object.values(PROVIDER_REGISTRY);
+  const providerOptions = Object.values(PROVIDER_REGISTRY).filter(item => !LOCAL_EDITION || item.local);
 
   useEffect(() => {
     languageRef.current = language;
@@ -465,7 +466,7 @@ function SettingsModal({ user, onClose, onOpenLocalModels, onOpenSkills, onSaved
         const result = await api.testSettings(draft, language);
         setMessage({ kind: "ok", text: result.message });
       } else {
-        const result = await api.updateSettings(draft, language);
+        const result = await api.updateSettings({ ...draft, ...(LOCAL_EDITION && saved?.editionRestricted ? { confirmLocalConfiguration: true } : {}) }, language);
         setSaved(result.settings);
         setDraft((current) => ({ ...current, apiKey: "", clearApiKey: false, searchApiKey: "", clearSearchApiKey: false }));
         onSaved();
@@ -498,24 +499,25 @@ function SettingsModal({ user, onClose, onOpenLocalModels, onOpenSkills, onSaved
   };
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <header><div><span className="settings-kicker"><Settings size={13} />{t("settings.kicker")}</span><h2 id="settings-title">{t("settings.title")}</h2><p>{t("settings.subtitle")}</p></div><button className="icon-button" onClick={onClose} aria-label={t("common.close")}><X size={18} /></button></header>
+      <header><div><span className="settings-kicker"><Settings size={13} />{t("settings.kicker")}{LOCAL_EDITION && ` · ${t('edition.local')}`}</span><h2 id="settings-title">{t(LOCAL_EDITION ? 'edition.settingsTitle' : "settings.title")}</h2><p>{t(LOCAL_EDITION ? 'edition.localSubtitle' : "settings.subtitle")}</p></div><button className="icon-button" onClick={onClose} aria-label={t("common.close")}><X size={18} /></button></header>
       {loading ? <div className="settings-loading"><LoaderCircle className="spin" size={20} />{t("settings.loading")}</div> : <div className="settings-body">
         <LanguageSelect />
+        {LOCAL_EDITION && saved?.editionRestricted && <div className="settings-message error" role="alert"><CircleHelp size={16} />{t('edition.previousCloud')}</div>}
         <div className="settings-grid">
-          <label>{t("settings.provider")}<select value={draft.provider} onChange={(event) => changeProvider(event.target.value as ApiProvider)}>{providerOptions.map((item) => <option key={item.id} value={item.id}>{t(item.labelKey)}</option>)}</select></label>
+          <label>{t(LOCAL_EDITION ? 'edition.provider' : "settings.provider")}<select value={draft.provider} onChange={(event) => changeProvider(event.target.value as ApiProvider)}>{providerOptions.map((item) => <option key={item.id} value={item.id}>{t(item.labelKey)}</option>)}</select></label>
           <label>{t("settings.model")}<input list="provider-models" value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder={providerDefinition(draft.provider).defaultModel} /><datalist id="provider-models">{availableModels.map((model) => <option key={model} value={model} />)}</datalist></label>
         </div>
-        <div className="model-refresh-row"><button type="button" className="secondary compact" onClick={() => void refreshModels()} disabled={modelsBusy}>{modelsBusy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{modelsBusy ? t("settings.refreshingModels") : t("settings.refreshModels")}</button><button type="button" className="secondary compact" onClick={onOpenLocalModels}><Download size={14} />{t("settings.localModels")}</button><small>{t("settings.modelsHint")} · {t("settings.registryDate", { date: PROVIDER_REGISTRY_VERIFIED_AT })}</small></div>
-        <label>{t("settings.apiUrl")}<input value={draft.baseURL} onChange={(event) => setDraft({ ...draft, baseURL: event.target.value })} placeholder="https://api.example.com/v1" /></label>
-        <label>{t("settings.apiKey")}<input type="password" value={draft.apiKey || ""} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value, clearApiKey: false })} placeholder={saved?.apiKeyConfigured ? t("settings.savedKey", { mask: saved.apiKeyMasked }) : t("settings.enterKey")} /></label>
-        {saved?.apiKeyConfigured && <label className="clear-key"><input type="checkbox" checked={Boolean(draft.clearApiKey)} onChange={(event) => setDraft({ ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey })} />{t("settings.removeKey")}</label>}
+        <div className="model-refresh-row"><button type="button" className="secondary compact" onClick={() => void refreshModels()} disabled={modelsBusy}>{modelsBusy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{modelsBusy ? t("settings.refreshingModels") : t("settings.refreshModels")}</button><button type="button" className="secondary compact" onClick={onOpenLocalModels}><Download size={14} />{t("settings.localModels")}</button><small>{LOCAL_EDITION ? t('edition.localModelsHint') : `${t("settings.modelsHint")} · ${t("settings.registryDate", { date: PROVIDER_REGISTRY_VERIFIED_AT })}`}</small></div>
+        <label>{t(LOCAL_EDITION ? 'edition.localEndpoint' : "settings.apiUrl")}<input value={draft.baseURL} onChange={(event) => setDraft({ ...draft, baseURL: event.target.value })} readOnly={LOCAL_EDITION && draft.provider === 'local'} placeholder={LOCAL_EDITION ? 'http://127.0.0.1:11434/v1' : "https://api.example.com/v1"} />{LOCAL_EDITION && <small>{t('edition.localEndpointHint')}</small>}</label>
+        {!LOCAL_EDITION && <label>{t("settings.apiKey")}<input type="password" value={draft.apiKey || ""} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value, clearApiKey: false })} placeholder={saved?.apiKeyConfigured ? t("settings.savedKey", { mask: saved.apiKeyMasked }) : t("settings.enterKey")} /></label>}
+        {!LOCAL_EDITION && saved?.apiKeyConfigured && <label className="clear-key"><input type="checkbox" checked={Boolean(draft.clearApiKey)} onChange={(event) => setDraft({ ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey })} />{t("settings.removeKey")}</label>}
         <label>{t("settings.systemPrompt")}<textarea rows={8} value={draft.systemPrompt} onChange={(event) => setDraft({ ...draft, systemPrompt: event.target.value })} placeholder={t("settings.promptPlaceholder")} /><small>{draft.systemPrompt.length} / 12000</small></label>
         <div className="skill-settings">
           <div className="skill-setting-row skill-manager-entry"><span className="skill-setting-icon"><Puzzle size={17} /></span><div><strong>{t('skills.title')}</strong><small>{t('skills.settingsHint')}</small></div><button className="secondary compact" data-open-skills onClick={onOpenSkills}>{t('skills.nav')}</button></div>
-          <div className="skill-setting-row"><span className="skill-setting-icon"><Globe2 size={17} /></span><div><strong>{t("settings.webSearch")}</strong><small>{t("settings.webSearchHint")}</small></div><button className={`toggle ${draft.webSearchEnabled ? "on" : ""}`} onClick={() => setDraft({ ...draft, webSearchEnabled: !draft.webSearchEnabled })} aria-pressed={draft.webSearchEnabled}><i /></button></div>
-          {draft.webSearchEnabled && <label>{t("settings.searchKey")}<input type="password" value={draft.searchApiKey || ""} onChange={(event) => setDraft({ ...draft, searchApiKey: event.target.value, clearSearchApiKey: false })} placeholder={saved?.searchApiKeyConfigured ? t("settings.savedKey", { mask: saved.searchApiKeyMasked }) : t("settings.enterSearchKey")} /></label>}
-          {draft.webSearchEnabled && <label>{t("settings.searchBudget")}<select value={draft.searchBudgetMode} onChange={(event) => setDraft({ ...draft, searchBudgetMode: event.target.value as "free" | "quality" })}><option value="free">{t("settings.freeBudget")}</option><option value="quality">{t("settings.qualityBudget")}</option></select></label>}
-          {draft.webSearchEnabled && saved?.searchApiKeyConfigured && <label className="clear-key"><input type="checkbox" checked={Boolean(draft.clearSearchApiKey)} onChange={(event) => setDraft({ ...draft, clearSearchApiKey: event.target.checked, searchApiKey: event.target.checked ? "" : draft.searchApiKey })} />{t("settings.removeSearchKey")}</label>}
+          <div className="skill-setting-row"><span className="skill-setting-icon"><Globe2 size={17} /></span><div><strong>{t("settings.webSearch")}</strong><small>{t(LOCAL_EDITION ? 'edition.basicSearchHint' : "settings.webSearchHint")}</small></div><button className={`toggle ${draft.webSearchEnabled ? "on" : ""}`} onClick={() => setDraft({ ...draft, webSearchEnabled: !draft.webSearchEnabled })} aria-pressed={draft.webSearchEnabled}><i /></button></div>
+          {!LOCAL_EDITION && draft.webSearchEnabled && <label>{t("settings.searchKey")}<input type="password" value={draft.searchApiKey || ""} onChange={(event) => setDraft({ ...draft, searchApiKey: event.target.value, clearSearchApiKey: false })} placeholder={saved?.searchApiKeyConfigured ? t("settings.savedKey", { mask: saved.searchApiKeyMasked }) : t("settings.enterSearchKey")} /></label>}
+          {!LOCAL_EDITION && draft.webSearchEnabled && <label>{t("settings.searchBudget")}<select value={draft.searchBudgetMode} onChange={(event) => setDraft({ ...draft, searchBudgetMode: event.target.value as "free" | "quality" })}><option value="free">{t("settings.freeBudget")}</option><option value="quality">{t("settings.qualityBudget")}</option></select></label>}
+          {!LOCAL_EDITION && draft.webSearchEnabled && saved?.searchApiKeyConfigured && <label className="clear-key"><input type="checkbox" checked={Boolean(draft.clearSearchApiKey)} onChange={(event) => setDraft({ ...draft, clearSearchApiKey: event.target.checked, searchApiKey: event.target.checked ? "" : draft.searchApiKey })} />{t("settings.removeSearchKey")}</label>}
           <div className="skill-setting-row"><span className="skill-setting-icon"><Calculator size={17} /></span><div><strong>{t("settings.python")}</strong><small>{t("settings.pythonHint")}</small></div><button className={`toggle ${draft.pythonEnabled ? "on" : ""}`} onClick={() => setDraft({ ...draft, pythonEnabled: !draft.pythonEnabled })} aria-pressed={draft.pythonEnabled}><i /></button></div>
           <div className="skill-setting-row"><span className="skill-setting-icon"><ShieldCheck size={17} /></span><div><strong>{t("settings.reliability")}</strong><small>{t("settings.reliabilityHint")}</small></div><button className={`toggle ${draft.reliabilityEnabled ? "on" : ""}`} onClick={() => setDraft({ ...draft, reliabilityEnabled: !draft.reliabilityEnabled })} aria-pressed={draft.reliabilityEnabled}><i /></button></div>
           {draft.reliabilityEnabled && <div className="reliability-list">{Array.from({ length: 12 }, (_, index) => t(`settings.check.${index + 1}`)).map((item) => <span key={item}><Check size={10} />{item}</span>)}</div>}
@@ -565,7 +567,7 @@ function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSetting
   };
   return (
     <aside className="app-nav">
-      <div className="brand"><span className="brand-mark"><Sparkles size={17} /></span>AI Tip</div>
+      <div className="brand"><span className="brand-mark"><Sparkles size={17} /></span>AI Tip{LOCAL_EDITION && <small className="edition-badge">{t('edition.local')}</small>}</div>
       <div className="nav-actions">
         <button className="new-button" onClick={onNew}><Plus size={17} />{t("nav.new")}</button>
         <button className="icon-button upload-mini" onClick={onUpload} title={t("nav.import")}><Upload size={17} /></button>
@@ -581,6 +583,8 @@ function AppNav({ user, tab, counts, onTab, onNew, onUpload, onLogout, onSetting
         <button className={tab === "trash" ? "active" : ""} onClick={() => onTab("trash")}><Trash2 size={18} />{t("nav.trash")}<span>{counts.trash}</span></button>
       </nav>
       <div className="nav-bottom">
+        {BUILD_POLICY.showApiDownload && <a className="api-edition-download" data-api-edition-download href={BUILD_POLICY.apiDownloadURL} target="_blank" rel="noreferrer"><Download size={16} /><span>{t('edition.downloadApi')}</span></a>}
+        {LOCAL_EDITION && BUILD_POLICY.distribution === 'direct' && !BUILD_POLICY.showApiDownload && <span className="api-edition-download muted" data-api-edition-pending><Download size={16} /><span>{t('edition.downloadPending')}</span></span>}
         <button className="contact-copy-button" data-contact-copy onClick={() => void copyContact()} title={t("nav.contact")}><Mail size={17} /><span>{t("nav.contact")}</span></button>
         <span className={`contact-copy-status ${contactCopyState}`} data-contact-copy-status aria-live="polite">{contactCopyState === "copied" ? t("nav.contactCopied") : contactCopyState === "failed" ? t("nav.contactCopyFailed") : ""}</span>
         <button data-open-settings onClick={onSettings}><Settings size={18} />{t("nav.settings")}</button>
@@ -982,12 +986,12 @@ function TipPanel({ progressStage, tip, childTips, modelStatus, webSearchEnabled
         {tip.messages.map((message) => <div className={`message ${message.role}`} key={message.id} data-message-id={message.id}>{message.role === "assistant" && <span className="assistant-mark"><Sparkles size={13} /></span>}<div>{message.role === "assistant" && <SkillResults skills={message.skills} />}<MessageContent tip={tip} message={message} childTips={childTips} onSelection={onMessageSelection} onOpenTip={onOpenTip} />{message.role === "assistant" && <button className="copy-message" onClick={() => void navigator.clipboard.writeText(message.content)}><Copy size={13} />{t("common.copy")}</button>}</div></div>)}
         {isStreaming && <div className="message assistant"><span className="assistant-mark"><Sparkles size={13} /></span><div><SkillResults skills={streamingSkills} /><TipProgress stage={progressStage} language={language} />{streamingText ? renderMessage(streamingText) : streamingSkills.length ? <span className="tool-thinking">{t("tip.checkingTools")}</span> : <span className="thinking"><i /><i /><i /></span>}<span className="cursor" /></div></div>}
         {error && <div className="chat-error"><CircleHelp size={15} />{error}</div>}
-        {!modelReady && <div className="tip-model-required" data-model-required={modelStatus?.reason || "checking"}><div>{modelStatus ? <Cpu size={20} /> : <LoaderCircle className="spin" size={20} />}</div><h3>{modelStatus ? t("tip.modelRequiredTitle") : t("tip.modelChecking")}</h3><p>{modelStatus?.reason === "ollama-unreachable" || modelStatus?.reason === "invalid-local-endpoint" ? t("tip.ollamaUnavailable") : modelStatus?.reason === "model-not-installed" ? t("tip.localModelMissing") : modelStatus ? t("tip.modelRequired") : t("tip.modelCheckingHint")}</p>{modelStatus && <div><button className="secondary compact" onClick={onOpenSettings}><Settings size={14} />{t("tip.configureApi")}</button><button className="primary compact" onClick={onOpenLocalModels}><Download size={14} />{t("tip.downloadLocal")}</button></div>}</div>}
+        {!modelReady && <div className="tip-model-required" data-model-required={modelStatus?.reason || "checking"}><div>{modelStatus ? <Cpu size={20} /> : <LoaderCircle className="spin" size={20} />}</div><h3>{modelStatus ? t("tip.modelRequiredTitle") : t("tip.modelChecking")}</h3><p>{LOCAL_EDITION ? t(modelStatus ? modelStatus.reason === 'ollama-unreachable' ? 'edition.ollamaUnavailable' : 'edition.localModelRequired' : 'edition.localModelChecking') : modelStatus?.reason === "ollama-unreachable" || modelStatus?.reason === "invalid-local-endpoint" ? t("tip.ollamaUnavailable") : modelStatus?.reason === "model-not-installed" ? t("tip.localModelMissing") : modelStatus ? t("tip.modelRequired") : t("tip.modelCheckingHint")}</p>{modelStatus && <div><button className="secondary compact" onClick={onOpenSettings}><Settings size={14} />{t("tip.configureApi")}</button><button className="primary compact" onClick={onOpenLocalModels}><Download size={14} />{t("tip.downloadLocal")}</button></div>}</div>}
         <div />
       </div>
       <div className="tip-composer">
         <textarea disabled={!modelReady} value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }} placeholder={modelReady ? t("tip.followup") : t("tip.modelRequiredPlaceholder")} rows={3} />
-        <div><span>{t("tip.sendHint")}</span><div className="tip-composer-actions"><SkillPicker language={language} disabled={isStreaming} onManage={onOpenSkills} onBusyChange={setSkillSaving} /><button className={`composer-web-search ${webSearchEnabled ? "on" : "off"}`} data-chat-web-search-toggle aria-pressed={webSearchEnabled === true} disabled={webSearchEnabled === null || webSearchBusy || isStreaming} onClick={onToggleWebSearch} title={webSearchBusy ? t("tip.webSearchUpdating") : t("tip.webSearchHint")}><Globe2 size={13} /><span>{webSearchEnabled ? t("tip.webSearchOn") : t("tip.webSearchOff")}</span><i /></button>{isStreaming ? <button className="stop-button" onClick={onStop}><Square size={13} fill="currentColor" />{t("tip.stop")}</button> : <button className="send-button" disabled={!question.trim() || !modelReady || skillSaving} onClick={submit}><Send size={15} /></button>}</div></div>
+        <div><span>{t("tip.sendHint")}</span><div className="tip-composer-actions"><SkillPicker language={language} disabled={isStreaming} onManage={onOpenSkills} onBusyChange={setSkillSaving} /><button className={`composer-web-search ${webSearchEnabled ? "on" : "off"}`} data-chat-web-search-toggle aria-pressed={webSearchEnabled === true} disabled={webSearchEnabled === null || webSearchBusy || isStreaming} onClick={onToggleWebSearch} title={webSearchBusy ? t("tip.webSearchUpdating") : t(LOCAL_EDITION ? 'edition.basicSearchHint' : "tip.webSearchHint")}><Globe2 size={13} /><span>{webSearchEnabled ? t("tip.webSearchOn") : t("tip.webSearchOff")}</span><i /></button>{isStreaming ? <button className="stop-button" onClick={onStop}><Square size={13} fill="currentColor" />{t("tip.stop")}</button> : <button className="send-button" disabled={!question.trim() || !modelReady || skillSaving} onClick={submit}><Send size={15} /></button>}</div></div>
       </div>
       {!contextMode && <footer className="tip-actions"><button onClick={onResolve}><CheckCircle2 size={15} />{tip.status === "resolved" ? t("tip.resolved") : t("tip.resolve")}</button><button className="danger-text" onClick={onDelete}><Trash2 size={15} />{t("common.delete")}</button></footer>}
     </aside>

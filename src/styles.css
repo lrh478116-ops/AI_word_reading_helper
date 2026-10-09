@@ -336,3 +336,6 @@ button { border: 0; background: none; cursor: pointer; }
 .retrieval-extracts { font-size: 12px; overflow-wrap: anywhere; }
 .retrieval-extracts summary { cursor: pointer; padding: 6px 0; }
 .retrieval-extracts blockquote { margin: 5px 0 12px; padding: 8px; white-space: pre-wrap; border-left: 2px solid #87917f; }
+.edition-badge { font-size: 10px; font-weight: 500; line-height: 1.3; color: var(--muted); margin-left: auto; white-space: nowrap; }
+.api-edition-download { display: flex; align-items: center; gap: 9px; padding: 9px 12px; margin-bottom: 4px; border-radius: 8px; color: var(--accent); font-size: 12px; text-decoration: none; }
+.api-edition-download:hover { background: var(--accent-soft); text-decoration: underline; }

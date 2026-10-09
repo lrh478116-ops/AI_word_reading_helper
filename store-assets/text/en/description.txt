@@ -20,13 +20,13 @@ For large documents, on-device text retrieval finds passages related to your que
 YOUR DOCUMENTS, YOUR MODEL
 Import PDF, DOCX, Markdown and text files. Documents, edits, Tips and conversations are saved locally by default. Signing in does not upload them automatically. Cloud copies are created only when you choose to upload, with a current 5 MB quota per user.
 
-Connect your own compatible AI API, or download or import a compatible GGUF model in the app. The built-in inference runtime supports the local-model route without a separate AI server. Model weights require a separate download, disk space and sufficient memory; suitability depends on your Mac and the model.
+Download or import a compatible GGUF model, or connect to Ollama on this Mac. The Mac App Store edition uses on-device models only and has no cloud-model or search API-key configuration. The built-in inference runtime supports the local-model route without a separate AI server. Model weights require a separate download, disk space and sufficient memory; suitability depends on your Mac and the model.
 
 LOOK BEYOND THE PAGE WHEN YOU CHOOSE
-Web search is off by default. Switch it on in Settings or beside the message input when you want external sources. Local calculation tools can assist with numerical questions. AI answers, sources and calculations still need review against the document and their assumptions; accuracy and freshness are not guaranteed.
+Web search is off by default. Switch it on in Settings or beside the message input to search a limited set of reference sites, with no search API key required. Local calculation tools can assist with numerical questions. AI answers, sources and calculations still need review against the document and their assumptions; accuracy and freshness are not guaranteed.
 
 BEFORE YOU START
-Importing and reading documents do not require a model API. AI replies require a working online provider or a downloaded, loaded local model. Online providers receive your questions and relevant document context and may charge under their own terms. Local inference is not fully offline if you enable web search.
+Importing and reading documents do not require a model. AI replies require a downloaded, loaded and connected on-device model. Model weights are downloaded separately; no paid API key unlocks generation. Local inference is not fully offline if you enable web search.
 
 Available in Simplified Chinese and English.
 

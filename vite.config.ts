@@ -3,6 +3,11 @@ import react from "@vitejs/plugin-react";
 import { createReadStream } from "node:fs";
 import { cp, stat } from "node:fs/promises";
 import path from "node:path";
+import { createBuildPolicy } from './src/edition.ts';
+
+const requestedPolicy = process.env.AI_TIP_BUILD_POLICY ? JSON.parse(process.env.AI_TIP_BUILD_POLICY) : null;
+const policy = requestedPolicy ? createBuildPolicy(requestedPolicy.edition, requestedPolicy.distribution, requestedPolicy.apiDownloadURL) : createBuildPolicy('api', 'direct');
+const outputDir = requestedPolicy ? path.resolve('.edition-build', `${policy.edition}-${policy.distribution}`, 'dist') : path.resolve('dist');
 
 const pdfAssetRoots = {
   cmaps: path.resolve("node_modules/pdfjs-dist/cmaps"),
@@ -34,14 +39,16 @@ function pdfAssets() {
     },
     async closeBundle() {
       for (const [group, source] of Object.entries(pdfAssetRoots)) {
-        await cp(source, path.resolve("dist", "pdfjs-assets", group), { recursive: true });
+        await cp(source, path.join(outputDir, "pdfjs-assets", group), { recursive: true });
       }
-      await cp(path.resolve("node_modules/pdfjs-dist/LICENSE"), path.resolve("dist", "pdfjs-assets", "LICENSE.pdfjs.txt"));
+      await cp(path.resolve("node_modules/pdfjs-dist/LICENSE"), path.join(outputDir, "pdfjs-assets", "LICENSE.pdfjs.txt"));
     }
   };
 }
 
 export default defineConfig({
+  define: { __AI_TIP_BUILD_POLICY__: JSON.stringify(policy) },
+  build: { outDir: outputDir, emptyOutDir: true },
   plugins: [react(), pdfAssets()],
   server: {
     port: 5173,

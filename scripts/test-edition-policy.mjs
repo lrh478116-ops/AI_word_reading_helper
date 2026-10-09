@@ -1,0 +1,32 @@
+import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { createBuildPolicy, validateEditionSettings, localModelBaseURL, restrictStoredSettings } from '../src/edition.ts';
+const api = createBuildPolicy('api', 'direct', '');
+const local = createBuildPolicy('local', 'direct', 'https://github.com/lrh478116-ops/AI_word_reading_helper/releases');
+const mas = createBuildPolicy('local', 'mas', '');
+assert.equal(api.cloudModels, true); assert.equal(api.tavily, true);
+assert.equal(local.cloudModels, false); assert.equal(local.tavily, false);
+assert.equal(local.showApiDownload, true); assert.equal(mas.showApiDownload, false);
+assert.throws(() => createBuildPolicy('api', 'mas', ''), /API.*MAS/);
+assert.throws(() => createBuildPolicy('local', 'direct', 'http://insecure.test'), /HTTPS/);
+assert.throws(() => createBuildPolicy('local', 'direct', 'https://user:pass@example.com'), /HTTPS/);
+for (const provider of ['openai', 'deepseek', 'custom', 'unknown']) assert.throws(() => validateEditionSettings(local, { provider }), /LOCAL_EDITION/);
+for (const body of [{apiKey:'key'}, {searchApiKey:'key'}, {baseURL:'https://example.com/v1',provider:'ollama'}, {baseURL:'http://127.0.0.1.evil.test/v1',provider:'ollama'}, {baseURL:'http://user:pass@127.0.0.1/v1',provider:'ollama'}]) assert.throws(() => validateEditionSettings(local, body), /LOCAL_EDITION/);
+assert.doesNotThrow(() => validateEditionSettings(local, {provider:'ollama',baseURL:'http://127.0.0.1:11434/v1'}));
+assert.doesNotThrow(() => validateEditionSettings(api, {provider:'deepseek',apiKey:'key',searchApiKey:'key'}));
+assert.equal(localModelBaseURL('http://[::1]:8080/v1'), 'http://[::1]:8080/v1');
+assert.throws(() => localModelBaseURL('https://example.com/v1'), /LOCAL_EDITION/);
+const stale={provider:'deepseek',baseURL:'https://api.deepseek.com',model:'old-model',apiKey:'old',searchApiKey:'old-search',systemPrompt:'Keep custom prompt',webSearchEnabled:true};
+const clean=restrictStoredSettings(local,stale,{provider:'local',baseURL:'http://127.0.0.1:8080/v1',model:'aitip:local-gguf'});
+assert.equal(clean.provider,'local');assert.equal(clean.apiKey,'');assert.equal(clean.searchApiKey,'');assert.equal(clean.systemPrompt,stale.systemPrompt);
+assert.deepEqual(restrictStoredSettings(api,stale,{}),stale);
+const packageJson=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8'));
+for(const name of ['desktop:prepare:local','desktop:start:local','desktop:dist:local:win','desktop:dist:api:win','desktop:dist:mas','desktop:dist:mas-dev']) assert.ok(packageJson.scripts[name],name);
+assert.match(packageJson.scripts['desktop:dist:mas'], /build-edition.*local.*mas/);
+const builderSource=readFileSync(new URL('./build-edition.mjs',import.meta.url),'utf8');
+assert.doesNotMatch(builderSource.match(/await packageApp\(\{[\s\S]*?\}\);/)?.[0]||'',/\bconfig:\s*build\b/,'Do not overlay the same staged package config: extraResources would be concatenated');
+for(const args of [['--edition','api','--distribution','mas'],['--edition','api','--distribution','direct','--pack','--target','mas']]){
+  const failed=spawnSync(process.execPath,['scripts/build-edition.mjs',...args],{encoding:'utf8'});assert.notEqual(failed.status,0);assert.match(failed.stderr,/API edition cannot be built for MAS|MAS packages must use the local MAS distribution/);
+}
+console.log(JSON.stringify({editionPolicies:true,cloudSettingsRejected:true,remoteLocalRejected:true,staleSettingsRestricted:true,apiUnchanged:true,masNoApiLink:true,evidence:'COMPONENT_CAPABILITY'}));

@@ -167,6 +167,7 @@ export interface TipThread {
 export type ApiProvider = "openai" | "deepseek" | "siliconflow" | "moonshot" | "zhipu" | "gemini" | "local" | "ollama" | "custom";
 
 export interface AiSettings {
+  editionRestricted?: boolean;
   provider: ApiProvider;
   baseURL: string;
   model: string;
@@ -182,6 +183,7 @@ export interface AiSettings {
 }
 
 export interface AiSettingsInput {
+  confirmLocalConfiguration?: boolean;
   provider: ApiProvider;
   baseURL: string;
   model: string;
@@ -196,7 +198,7 @@ export interface AiSettingsInput {
   reliabilityEnabled: boolean;
 }
 
-export type AiRuntimeStatusReason = "ready" | "no-api-key" | "local-runtime-unavailable" | "ollama-unreachable" | "model-not-installed" | "invalid-local-endpoint";
+export type AiRuntimeStatusReason = "ready" | "no-api-key" | "local-runtime-unavailable" | "ollama-unreachable" | "model-not-installed" | "invalid-local-endpoint" | "edition-restricted";
 
 export interface AiRuntimeStatus {
   configured: boolean;

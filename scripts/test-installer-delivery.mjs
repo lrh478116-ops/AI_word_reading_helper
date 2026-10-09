@@ -1,0 +1,11 @@
+import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { createBuildPolicy } from '../src/edition.ts';
+const pkg=JSON.parse(readFileSync('package.json','utf8'));
+assert.equal(pkg.version,'1.12.17','New installer delivery must not reuse the old privacy-only installer version');
+assert.equal(createBuildPolicy('local','direct','').showApiDownload,false);
+assert.equal(createBuildPolicy('local','mas','').showApiDownload,false);
+const builder=readFileSync('scripts/build-edition.mjs','utf8');
+assert.doesNotMatch(builder,/Set a published API Edition download URL before packaging/,'Local installer must not be blocked by an unrelated public-release decision');
+assert.match(readFileSync('src/App.tsx','utf8'),/data-api-edition-pending/);
+console.log(JSON.stringify({newVersion:true,localInstallerWithoutPublishedUrl:true,noFakeDownload:true,masNoLink:true,evidence:'COMPONENT_CAPABILITY'}));

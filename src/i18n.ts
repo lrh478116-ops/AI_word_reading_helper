@@ -153,7 +153,8 @@ const en: Record<string, string> = {
 };
 
 import { skillZh, skillEn } from './skill-i18n.ts';
-const dictionaries: Record<Language, Record<string, string>> = { "zh-CN": { ...zh, ...skillZh }, en: { ...en, ...skillEn } };
+import { editionZh, editionEn } from './edition-i18n.ts';
+const dictionaries: Record<Language, Record<string, string>> = { "zh-CN": { ...zh, ...skillZh, ...editionZh }, en: { ...en, ...skillEn, ...editionEn } };
 
 export function normalizeLanguage(value: unknown): Language {
   return value === "en" ? "en" : "zh-CN";

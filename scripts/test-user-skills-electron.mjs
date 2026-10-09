@@ -111,6 +111,7 @@ try {
   await js(`window.skillWait = async test => {for(let i=0;i<250;i++){if(test())return;await new Promise(r=>setTimeout(r,20));}throw Error('UI timeout');}; true`);
   await js(`(async()=>{await skillWait(()=>document.querySelector('.document-card')); document.querySelector('.document-card').click(); await skillWait(()=>document.querySelector('[data-editor-document]')); window.originalEditor=document.querySelector('[data-editor-document]'); document.querySelector('.editor-controls button[title="AI settings"]').click(); await skillWait(()=>document.querySelector('.settings-modal')); document.querySelector('.settings-modal [data-open-skills]').click(); await skillWait(()=>document.querySelector('[data-skill-manager]'));})()`);
   assert.match(await js(`document.querySelector('#skills-title').textContent`), /Manage Skills/);
+  await js(`skillWait(()=>document.querySelector('[data-skill-id] .skill-card-content'))`);
   if (process.env.AI_TIP_CAPTURE_SKILL_UI === '1') { await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))'); await new Promise(r=>setTimeout(r,150)); await writeFile(path.join(screenshotDir, 'skill-manager-en.png'), (await window.webContents.capturePage()).toPNG()); }
   await js(`document.querySelector('[data-skill-id] .skill-card-content').click(); true`);
   await js(`window.confirm=()=>true; document.querySelector('[data-skill-delete]').click(); true`);

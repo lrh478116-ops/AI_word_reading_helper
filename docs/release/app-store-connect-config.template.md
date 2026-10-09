@@ -1,6 +1,6 @@
 # App Store Connect 配置（Mac · 中英文文案）
 
-> 更新：2026-09-16。面向论文、课程与技术/政策资料阅读者，以“原文提问—逐层追问—回溯理解路径”为定位。商品页字段来自 [metadata.json](../../store-assets/metadata.json)；可粘贴的纯文本在 [store-assets/text](../../store-assets/text)。本文件不是已上架声明，方括号须由运营者真实填写。
+> 更新：2026-10-08。本文件只对应 Mac App Store 本地模型版，不用于站外 API 版。面向论文、课程与技术/政策资料阅读者，以“原文提问—逐层追问—回溯理解路径”为定位。商品页字段来自 [metadata.json](../../store-assets/metadata.json)；可粘贴的纯文本在 [store-assets/text](../../store-assets/text)。本文件不是已上架声明，方括号须由运营者真实填写。
 
 ## 1. App Information / 应用信息
 
@@ -36,9 +36,9 @@ Subtitle（16/30）
 
 Promotional Text（89/170；仅在后台提供该字段时使用）
 
-把读不懂的一句话，变成有上下文的讨论。从原文创建 Tip，从回答继续追问，用 Tip Tree 找回思路。支持 PDF 原版式阅读、本地 OCR 和自选模型，文档默认保存在本机。
+把读不懂的一句话，变成有上下文的讨论。从原文创建 Tip，从回答继续追问，用 Tip Tree 找回思路。支持 PDF 原版式阅读、本地 OCR 和本地模型，文档默认保存在本机。
 
-Description（1156/4000；粘贴以下正文，不复制 Markdown 标题）
+Description（1188/4000；粘贴以下正文，不复制 Markdown 标题）
 
 读到一个陌生概念，不必把原文和问题反复搬进聊天窗口。
 
@@ -62,13 +62,13 @@ AI Tip 为论文、教材、技术规范和政策资料提供一处可以边读�
 文档由你保管，模型由你选择
 支持 PDF、DOCX、Markdown 和文本文件。导入、编辑、Tip 与聊天默认保存在当前设备，登录云账户不会自动上传文档。只有主动点击上传，才创建云端副本；当前每个用户云端限额为 5 MB。
 
-可接入自己的兼容大模型 API，也可在应用内下载或导入兼容 GGUF 本地模型。内置推理运行环境，本地模型路线无需另装独立 AI 服务。模型文件需另行下载并占用磁盘、内存；是否适合运行取决于 Mac 配置与所选模型。
+在应用内下载或导入兼容 GGUF 本地模型，或连接本机 Ollama。Mac 商店版本只使用本机模型，不提供云模型或搜索 API Key 配置。内置推理运行环境，本地模型路线无需另装独立 AI 服务。模型文件需另行下载并占用磁盘、内存；是否适合运行取决于 Mac 配置与所选模型。
 
 联网与核验，按需开启
-联网搜索默认关闭，可在设置或对话输入框旁切换。启用后可查找外部资料；数值问题还可调用本地计算工具。AI 回答、检索结果与计算过程仍需结合原文和具体条件判断，不保证事实始终准确或资料始终最新。
+联网搜索默认关闭，可在设置或对话输入框旁切换。启用后使用基础参考站点检索外部资料，无需搜索 API Key；数值问题还可调用本地计算工具。AI 回答、检索结果与计算过程仍需结合原文和具体条件判断，不保证事实始终准确或资料始终最新。
 
 使用前请了解
-没有配置模型时仍可导入和阅读文档；生成 AI 回答需要可用的在线接口或已下载并加载的本地模型。使用在线 API 时，问题及相关文档上下文会发送给你选择的服务商，其费用和条款由该服务商决定。本地推理不等于开启联网搜索后仍完全离线。
+没有配置模型时仍可导入和阅读文档；生成 AI 回答需要已下载、加载并连接的本地模型。模型文件需另行下载，生成能力不会通过付费 API Key 解锁。本地推理不等于开启联网搜索后仍完全离线。
 
 支持简体中文与英文界面。
 
@@ -88,11 +88,11 @@ Subtitle（30/30）
 
 Follow questions, keep context
 
-Promotional Text（146/170；仅在后台提供该字段时使用）
+Promotional Text（139/170；仅在后台提供该字段时使用）
 
-Ask beside a passage, explore a reply, and find your way back with Tip Tree. Read original-layout PDFs with local OCR and your choice of AI model.
+Ask beside a passage, explore a reply, and find your way back with Tip Tree. Read original-layout PDFs with local OCR and on-device models.
 
-Description（3124/4000；粘贴以下正文，不复制 Markdown 标题）
+Description（3216/4000；粘贴以下正文，不复制 Markdown 标题）
 
 A difficult passage deserves more than a disconnected chat.
 
@@ -116,13 +116,13 @@ For large documents, on-device text retrieval finds passages related to your que
 YOUR DOCUMENTS, YOUR MODEL
 Import PDF, DOCX, Markdown and text files. Documents, edits, Tips and conversations are saved locally by default. Signing in does not upload them automatically. Cloud copies are created only when you choose to upload, with a current 5 MB quota per user.
 
-Connect your own compatible AI API, or download or import a compatible GGUF model in the app. The built-in inference runtime supports the local-model route without a separate AI server. Model weights require a separate download, disk space and sufficient memory; suitability depends on your Mac and the model.
+Download or import a compatible GGUF model, or connect to Ollama on this Mac. The Mac App Store edition uses on-device models only and has no cloud-model or search API-key configuration. The built-in inference runtime supports the local-model route without a separate AI server. Model weights require a separate download, disk space and sufficient memory; suitability depends on your Mac and the model.
 
 LOOK BEYOND THE PAGE WHEN YOU CHOOSE
-Web search is off by default. Switch it on in Settings or beside the message input when you want external sources. Local calculation tools can assist with numerical questions. AI answers, sources and calculations still need review against the document and their assumptions; accuracy and freshness are not guaranteed.
+Web search is off by default. Switch it on in Settings or beside the message input to search a limited set of reference sites, with no search API key required. Local calculation tools can assist with numerical questions. AI answers, sources and calculations still need review against the document and their assumptions; accuracy and freshness are not guaranteed.
 
 BEFORE YOU START
-Importing and reading documents do not require a model API. AI replies require a working online provider or a downloaded, loaded local model. Online providers receive your questions and relevant document context and may charge under their own terms. Local inference is not fully offline if you enable web search.
+Importing and reading documents do not require a model. AI replies require a downloaded, loaded and connected on-device model. Model weights are downloaded separately; no paid API key unlocks generation. Local inference is not fully offline if you enable web search.
 
 Available in Simplified Chinese and English.
 
@@ -147,17 +147,17 @@ PDF,OCR,papers,research,annotation,notes,local models,document reader,study,know
 
 ## 4. App Review Information / 审核信息（非公开）
 
-Contact Name / Phone：填写真实联系人与可接听国际号码（+国家码）。Email：2280810215@qq.com。审核账号、密码和可用模型凭据只填 App Store Connect 私密审核区域，不写进 Git。
+Contact Name / Phone：填写真实联系人与可接听国际号码（+国家码）。Email：2280810215@qq.com。审核账号和密码只填 App Store Connect 私密审核区域，不写进 Git。
 
 Notes for Review：
 
 1. 候选版本若包含首次隐私确认，启动时阅读并主动同意；不同意会退出。确认实际上传构建包含该功能再提交此说明。
-2. 点击“仅本地使用”即可无云账户导入和阅读文档。导入与创建 Tip 不代表已配置推理；AI 回答需要工作中的模型 API 或已下载、已加载的本地模型。
+2. 点击“仅本地使用”即可无云账户导入和阅读文档。导入与创建 Tip 不代表已配置推理；AI 回答需要已下载、已加载并连接的本地模型；本候选无云模型 API 配置。
 3. 导入有文字层的 PDF，选中原文创建 Tip，提问；从回复中选择术语创建子 Tip。展开左上 Tip Tree，重命名节点、点击定位，再收回返回上一层。
 4. 扫描 PDF 点击“识别本页文字”，核对 OCR 后创建 Tip；导出 Tip 批注生成 PDF 副本，不覆盖原文件。
 5. 本地模型路线：设置中下载/导入兼容 GGUF，完成加载再测试回答。Mac 沙箱、模型目录书签、helper 签名与两种架构必须实测。
-6. 提供可用的审核推理路径：在私密说明提供短期受限测试配置或已验证本地下载步骤。不要让审核员使用未经验证的模型或无法访问的源；不得让开发者私钥进入公开安装包。
-7. 联网默认关闭，设置和输入框开关同步；开启后才访问资料来源。在线模型调用与搜索是不同配置，在线模型仍接收上下文。
+6. 提供可用的审核推理路径：在私密说明提供已验证的免费、无许可登录的模型下载或导入步骤、具体文件与大小，供审核验证。不要让审核员使用未经验证的模型或无法访问的源；不得让开发者私钥进入公开安装包。
+7. 联网默认关闭，设置和输入框开关同步；开启后才访问资料来源。本候选仅基础参考检索，不调用 Tavily，不显示站外 API 版下载导流。
 8. 云账户凭据在私密 Sign-in required 区域填写；登录不会自动上传。每个文档需主动上传，当前配额 5 MB。“删除云端文件”不删除本地内容。
 9. 删除云账户：设置 → 账户与隐私 → 删除账户；本地模式对应清除本地数据。真实邮件、云删除验证成功后再提交审核。
 

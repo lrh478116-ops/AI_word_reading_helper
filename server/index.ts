@@ -33,6 +33,8 @@ import { collectCompletion, ModelStreamError, validateToolBindings } from './mod
 import { prepareDocument, retrieveDocument } from './document-rag.ts';
 import { buildSkillContext, UserSkillStore } from './user-skills.ts';
 import { userSkillRoutes, skillErrorResponse } from './user-skill-routes.ts';
+import { BUILD_POLICY, LOCAL_EDITION, localModelBaseURL, restrictStoredSettings, validateEditionSettings } from '../src/edition.ts';
+export { BUILD_POLICY } from '../src/edition.ts';
 
 export { DEFAULT_SYSTEM_PROMPTS, defaultPromptForLanguage, resolveSystemPrompt } from "../src/prompts.js";
 export { probeCloudConnection } from './supabase.js';
@@ -219,7 +221,9 @@ async function readDb(): Promise<Database> {
   await mkdir(dataDir, { recursive: true });
   if (!existsSync(storePath)) return { users: [], documents: [], tips: [], settings: [] };
   const db = JSON.parse(await readFile(storePath, "utf8")) as Partial<Database>;
-  const settings = (db.settings || []).map((item) => ({ ...item, apiKey: decodeSecret(item.apiKey), searchApiKey: decodeSecret(item.searchApiKey) }));
+  const settings = (db.settings || []).map((item) => LOCAL_EDITION
+    ? restrictStoredSettings(BUILD_POLICY, item, { provider: 'local', baseURL: providerDefinition('local').baseURL, model: providerDefinition('local').defaultModel })
+    : ({ ...item, apiKey: decodeSecret(item.apiKey), searchApiKey: decodeSecret(item.searchApiKey) }));
   const tips = (db.tips || []).map((tip) => ({
     ...tip,
     anchorType: tip.anchorType === "message" ? "message" as const : tip.anchorType === "pdf" ? "pdf" as const : "document" as const,
@@ -647,14 +651,16 @@ app.delete("/api/auth/account", auth, async (req: AuthedRequest, res) => {
 const defaultPrompt = DEFAULT_SYSTEM_PROMPTS["zh-CN"];
 
 function defaultSettings(userId: string): StoredAiSettings {
-  const preset = providerDefinition("openai");
-  return { userId, provider: "openai", baseURL: preset.baseURL, model: preset.defaultModel, apiKey: "", systemPrompt: defaultPrompt, webSearchEnabled: false, searchBudgetMode: "free", searchApiKey: "", pythonEnabled: true, reliabilityEnabled: true };
+  const provider = LOCAL_EDITION ? 'local' : 'openai';
+  const preset = providerDefinition(provider);
+  return { userId, provider, baseURL: preset.baseURL, model: preset.defaultModel, apiKey: "", systemPrompt: defaultPrompt, webSearchEnabled: false, searchBudgetMode: "free", searchApiKey: "", pythonEnabled: true, reliabilityEnabled: true };
 }
 
 function publicSettings(settings: StoredAiSettings): AiSettings {
   const key = settings.apiKey || "";
   const searchKey = settings.searchApiKey || "";
   return {
+    ...(LOCAL_EDITION ? { editionRestricted: Boolean(settings.editionRestricted) } : {}),
     provider: settings.provider,
     baseURL: settings.baseURL,
     model: settings.model,
@@ -672,7 +678,9 @@ function publicSettings(settings: StoredAiSettings): AiSettings {
 
 function normalizeSettings(userId: string, input: Partial<AiSettingsInput>, previous?: StoredAiSettings, language: PromptLanguage = "zh-CN"): StoredAiSettings {
   const t = (key: string) => translate(language, key);
-  const provider = Object.hasOwn(PROVIDER_REGISTRY, input.provider || "") ? input.provider! : (previous?.provider || "openai");
+  if (LOCAL_EDITION && previous?.editionRestricted && input.confirmLocalConfiguration !== true) throw new Error(t('edition.previousCloud'));
+  try { validateEditionSettings(BUILD_POLICY, input); } catch { throw new Error(t('edition.apiUnsupported')); }
+  const provider = Object.hasOwn(PROVIDER_REGISTRY, input.provider || "") ? input.provider! : (previous?.provider || (LOCAL_EDITION ? 'local' : 'openai'));
   const preset = providerDefinition(provider);
   const baseURL = String(input.baseURL ?? previous?.baseURL ?? preset.baseURL).trim().replace(/\/$/, "").slice(0, 500);
   const model = String(input.model ?? previous?.model ?? preset.defaultModel).trim().slice(0, 200);
@@ -680,7 +688,7 @@ function normalizeSettings(userId: string, input: Partial<AiSettingsInput>, prev
   const apiKey = input.clearApiKey ? "" : typeof input.apiKey === "string" && input.apiKey.trim() ? input.apiKey.trim().slice(0, 1000) : (previous?.apiKey || "");
   const searchApiKey = input.clearSearchApiKey ? "" : typeof input.searchApiKey === "string" && input.searchApiKey.trim() ? input.searchApiKey.trim().slice(0, 1000) : (previous?.searchApiKey || "");
   const webSearchEnabled = typeof input.webSearchEnabled === "boolean" ? input.webSearchEnabled : Boolean(previous?.webSearchEnabled);
-  const searchBudgetMode = input.searchBudgetMode === "quality" ? "quality" : input.searchBudgetMode === "free" ? "free" : previous?.searchBudgetMode === "quality" ? "quality" : "free";
+  const searchBudgetMode = LOCAL_EDITION ? 'free' : input.searchBudgetMode === "quality" ? "quality" : input.searchBudgetMode === "free" ? "free" : previous?.searchBudgetMode === "quality" ? "quality" : "free";
   const pythonEnabled = typeof input.pythonEnabled === "boolean" ? input.pythonEnabled : previous?.pythonEnabled !== false;
   const reliabilityEnabled = typeof input.reliabilityEnabled === "boolean" ? input.reliabilityEnabled : previous?.reliabilityEnabled !== false;
   if (!baseURL || !/^https?:\/\//i.test(baseURL)) throw new Error(t("settings.error.invalidUrl"));
@@ -731,13 +739,13 @@ async function readOllamaRuntime(originOverride?: string | null): Promise<LocalR
   const storage = ollamaStorageInfo();
   if (!origin) return { reachable: false, origin: "", version: "", runtime: "ollama", ...storage, installedModels: [], totalRamBytes: os.totalmem(), error: "Ollama 地址必须是本机 HTTP 回环地址" };
   try {
-    const tagsResponse = await cancellableFetch(globalThis.fetch, `${origin}/api/tags`, { signal: AbortSignal.timeout(4_000) });
+    const tagsResponse = await cancellableFetch(globalThis.fetch, `${origin}/api/tags`, { signal: AbortSignal.timeout(4_000), ...(LOCAL_EDITION ? { redirect: 'error' as const } : {}) });
     if (!tagsResponse.ok) throw new Error(`Ollama /api/tags 返回 ${tagsResponse.status}`);
     const tags = await tagsResponse.json() as { models?: Array<{ name?: string; model?: string }> };
     const installedModels = [...new Set((tags.models || []).flatMap((item) => [String(item.name || ""), String(item.model || "")]).filter(Boolean))];
     let version = "";
     try {
-      const versionResponse = await cancellableFetch(globalThis.fetch, `${origin}/api/version`, { signal: AbortSignal.timeout(2_000) });
+      const versionResponse = await cancellableFetch(globalThis.fetch, `${origin}/api/version`, { signal: AbortSignal.timeout(2_000), ...(LOCAL_EDITION ? { redirect: 'error' as const } : {}) });
       if (versionResponse.ok) version = String(((await versionResponse.json()) as { version?: unknown }).version || "");
     } catch { checkCancelled(); /* Older Ollama versions may not expose /api/version. */ }
     return { reachable: true, origin, version, runtime: "ollama", ...storage, installedModels, totalRamBytes: os.totalmem() };
@@ -752,15 +760,17 @@ function readBundledLocalRuntime(): LocalRuntimeInfo {
 }
 
 async function readOpenAiCompatibleModels(origin: string) {
-  const response = await cancellableFetch(globalThis.fetch, `${origin.replace(/\/$/, "")}/v1/models`, { signal: AbortSignal.timeout(4_000) });
+  if (LOCAL_EDITION) localModelBaseURL(`${origin.replace(/\/$/, '')}/v1`);
+  const response = await cancellableFetch(globalThis.fetch, `${origin.replace(/\/$/, "")}/v1/models`, { signal: AbortSignal.timeout(4_000), ...(LOCAL_EDITION ? { redirect: 'error' as const } : {}) });
   if (!response.ok) throw new Error(`/v1/models 返回 ${response.status}`);
   const body = await response.json() as { data?: Array<{ id?: unknown }> };
   return (body.data || []).map((item) => String(item.id || "")).filter(Boolean);
 }
 
 async function resolveAiRuntimeStatus(settings?: StoredAiSettings): Promise<AiRuntimeStatus> {
-  const provider = settings?.provider || "openai";
+  const provider = settings?.provider || (LOCAL_EDITION ? 'local' : 'openai');
   const model = settings?.model || process.env.OPENAI_MODEL || providerDefinition(provider).defaultModel;
+  if (LOCAL_EDITION && settings?.editionRestricted) return { configured: false, provider, model, reason: 'edition-restricted', local: true };
   if (provider !== "ollama" && provider !== "local") {
     const configured = Boolean(settings?.apiKey || serverFallbackApiKey());
     return { configured, provider, model, reason: configured ? "ready" : "no-api-key", local: false };
@@ -784,6 +794,8 @@ async function resolveAiRuntimeStatus(settings?: StoredAiSettings): Promise<AiRu
 
 function runtimeErrorResponse(status: AiRuntimeStatus, language: PromptLanguage) {
   const en = language === "en";
+  if (status.reason === 'edition-restricted') return { code: 'EDITION_SETTINGS_RESTRICTED', error: translate(language, 'edition.previousCloud') };
+  if (LOCAL_EDITION) return { code: 'LOCAL_RUNTIME_UNAVAILABLE', error: translate(language, status.reason === 'ollama-unreachable' ? 'edition.ollamaUnavailable' : 'edition.localModelRequired') };
   if (status.reason === "model-not-installed") return { code: "LOCAL_MODEL_NOT_INSTALLED", error: status.provider === "local"
     ? en ? "The selected GGUF is not loaded. Download it again or import the local file." : "所选 GGUF 尚未加载，请重新下载或导入本地文件。"
     : en ? "The selected local model is not installed. Download it again or choose an installed Ollama model." : "所选本地模型尚未安装，请重新下载或选择 Ollama 中已安装的模型。" };
@@ -793,6 +805,26 @@ function runtimeErrorResponse(status: AiRuntimeStatus, language: PromptLanguage)
 }
 
 app.use('/api/skills', auth, userSkillRoutes(userSkillStore));
+app.get('/api/edition', (_req, res) => res.json({ policy: BUILD_POLICY }));
+
+function createModelClient(settings: StoredAiSettings, options: { maxRetries?: number } = {}) {
+  const runtimeOrigin = settings.provider === 'local' ? readBundledLocalRuntime().origin : '';
+  const baseURL = runtimeOrigin ? `${runtimeOrigin}/v1` : settings.baseURL;
+  if (LOCAL_EDITION) {
+    validateEditionSettings(BUILD_POLICY, settings);
+    if (settings.provider === 'local' && !runtimeOrigin) throw new Error('Local model runtime is unavailable');
+    localModelBaseURL(baseURL);
+  }
+  return new OpenAI({ apiKey: LOCAL_EDITION ? 'local-runtime' : settings.apiKey || (['local', 'ollama'].includes(settings.provider) ? 'local-runtime' : serverFallbackApiKey()), baseURL, ...options,
+    fetch: (input, init) => {
+      if (LOCAL_EDITION) {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        localModelBaseURL(`${url.origin}/v1`);
+        if (url.origin !== new URL(baseURL).origin) throw new Error('LOCAL_EDITION: model request origin changed');
+      }
+      return cancellableFetch(globalThis.fetch, input, { ...init, ...(LOCAL_EDITION ? { redirect: 'error' } : {}) });
+    } });
+}
 
 app.get("/api/settings", auth, async (req: AuthedRequest, res) => {
   const db = await readDb();
@@ -823,8 +855,7 @@ app.post("/api/settings/test", auth, async (req: AuthedRequest, res) => {
   try {
     const settings = normalizeSettings(req.user!.id, req.body as Partial<AiSettingsInput>, previous, language);
     if (!settings.apiKey && settings.provider !== "ollama" && settings.provider !== "local") return res.status(400).json({ error: t("settings.error.apiKeyRequired") });
-    const localOrigin = settings.provider === "local" ? readBundledLocalRuntime().origin : "";
-    const client = new OpenAI({ apiKey: settings.apiKey || "local-runtime", baseURL: localOrigin ? `${localOrigin}/v1` : settings.baseURL });
+    const client = createModelClient(settings);
     await client.chat.completions.create({
       model: settings.model,
       messages: [{ role: "user", content: language === "en" ? "Reply with OK only." : "请只回复 OK" }]
@@ -859,8 +890,7 @@ app.post("/api/settings/models", auth, async (req: AuthedRequest, res) => {
   try {
     const settings = normalizeSettings(req.user!.id, req.body as Partial<AiSettingsInput>, previous, language);
     if (!settings.apiKey && settings.provider !== "ollama" && settings.provider !== "local") return res.status(400).json({ error: t("settings.error.apiKeyRequired") });
-    const localOrigin = settings.provider === "local" ? readBundledLocalRuntime().origin : "";
-    const client = new OpenAI({ apiKey: settings.apiKey || "local-runtime", baseURL: localOrigin ? `${localOrigin}/v1` : settings.baseURL });
+    const client = createModelClient(settings);
     const page = await client.models.list();
     const models = [...new Set(page.data.map((item) => String(item.id || "").trim()).filter(Boolean))].sort((left, right) => left.localeCompare(right));
     if (!models.length) return res.status(502).json({ error: t("settings.error.emptyModels") });
@@ -904,7 +934,7 @@ async function saveConnectedLocalModel(userId: string, runtime: LocalRuntimeInfo
     const db = await readDb();
     const index = db.settings.findIndex((item) => item.userId === userId);
     const previous = index >= 0 ? db.settings[index] : defaultSettings(userId);
-    const settings: StoredAiSettings = { ...previous, userId, provider: "local", baseURL: `${runtime.origin}/v1`, model: modelId, apiKey: "" };
+    const settings: StoredAiSettings = { ...previous, userId, provider: "local", baseURL: `${runtime.origin}/v1`, model: modelId, apiKey: "", ...(LOCAL_EDITION ? { editionRestricted: false } : {}) };
     if (index >= 0) db.settings[index] = settings; else db.settings.push(settings);
     await writeDb(db);
     return settings;
@@ -920,7 +950,7 @@ async function saveConnectedOllamaModel(userId: string, runtime: LocalRuntimeInf
     const db = await readDb();
     const index = db.settings.findIndex((item) => item.userId === userId);
     const previous = index >= 0 ? db.settings[index] : defaultSettings(userId);
-    const settings: StoredAiSettings = { ...previous, userId, provider: "ollama", baseURL: `${runtime.origin}/v1`, model: modelRef, apiKey: "" };
+    const settings: StoredAiSettings = { ...previous, userId, provider: "ollama", baseURL: `${runtime.origin}/v1`, model: modelRef, apiKey: "", ...(LOCAL_EDITION ? { editionRestricted: false } : {}) };
     if (index >= 0) db.settings[index] = settings; else db.settings.push(settings);
     await writeDb(db);
     return settings;
@@ -1702,6 +1732,7 @@ const webSearchCache = new Map<string, { expiresAt: number; value: WebSearchBund
 const SEARCH_CACHE_TTL_MS = 30 * 60_000;
 
 async function getTavilyUsage(apiKey: string) {
+  if (!BUILD_POLICY.tavily) throw new Error('LOCAL_EDITION: Tavily is unavailable');
   const response = await fetchExternal(process.env.TAVILY_USAGE_URL || "https://api.tavily.com/usage", {
     headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(10_000)
   });
@@ -1713,6 +1744,7 @@ async function getTavilyUsage(apiKey: string) {
 }
 
 async function searchWeb(query: string, apiKey: string): Promise<WebSearchBundle> {
+  if (!BUILD_POLICY.tavily) throw new Error('LOCAL_EDITION: Tavily is unavailable');
   const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 500);
   const cacheKey = `${hash(apiKey).slice(0, 16)}:${normalizedQuery}`;
   const cached = webSearchCache.get(cacheKey);
@@ -2182,7 +2214,7 @@ async function continueLengthLimitedAnswer(client: OpenAI, model: string, messag
 }
 
 function serverFallbackApiKey() {
-  return process.env.AI_TIP_DESKTOP === "1" ? "" : String(process.env.OPENAI_API_KEY || "");
+  return LOCAL_EDITION || process.env.AI_TIP_DESKTOP === "1" ? "" : String(process.env.OPENAI_API_KEY || "");
 }
 
 export type ProfessionalAssessment = {
@@ -2452,7 +2484,7 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => withChat
     }
     try { userSkillContext = buildSkillContext(await userSkillStore.list(req.user!.id), promptLanguage); }
     catch (error) { return skillErrorResponse(req, res, error); }
-    savedSettings = db.settings.find((item) => item.userId === req.user!.id);
+    savedSettings = db.settings.find((item) => item.userId === req.user!.id) || (LOCAL_EDITION ? defaultSettings(req.user!.id) : undefined);
     const runtimeStatus = await resolveAiRuntimeStatus(savedSettings);
     checkCancelled();
     if (!runtimeStatus.configured) {
@@ -2461,8 +2493,7 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => withChat
     }
     apiKey = savedSettings?.apiKey || (savedSettings?.provider === "ollama" || savedSettings?.provider === "local" ? "local-runtime" : "") || serverFallbackApiKey();
     selectedModel = savedSettings?.model || process.env.OPENAI_MODEL || "gpt-5.6-sol";
-    const effectiveBaseURL = savedSettings?.provider === "local" && readBundledLocalRuntime().origin ? `${readBundledLocalRuntime().origin}/v1` : savedSettings?.baseURL;
-    client = new OpenAI({ apiKey, baseURL: effectiveBaseURL, maxRetries: 0, fetch: (input, init) => cancellableFetch(globalThis.fetch, input, init) });
+    client = savedSettings ? createModelClient(savedSettings, { maxRetries: 0 }) : new OpenAI({ apiKey, maxRetries: 0, fetch: (input, init) => cancellableFetch(globalThis.fetch, input, init) });
     checkCancelled();
     tip = foundTip; document = foundDocument;
     const userMessage: TipMessage = { id: makeId(), tipId: tip.id, role: "user", content: question, createdAt: now() };
@@ -2848,7 +2879,9 @@ app.post("/api/tips/:id/chat", auth, async (req: AuthedRequest, res) => withChat
       }
     }
     if (referenceSearchAttempted) {
-      const notice = promptLanguage === "en"
+      const notice = LOCAL_EDITION
+        ? promptLanguage === 'en' ? '\n\nBasic search notice: Only a limited set of encyclopedia and reference sites was searched. Results may be incomplete or outdated; check the linked original sources.' : '\n\n基础搜索说明：本次仅检索有限的中外百科与参考站点，数据可能不完整或不够新，请核对所附原始来源。'
+        : promptLanguage === "en"
         ? "\n\nSearch quality notice: A Tavily API key was not used for this search, so only a limited set of encyclopedia and reference sites was searched. The data may not be sufficiently detailed or current. Add and enable a Tavily API key in Settings for broader and more up-to-date web search."
         : "\n\n联网质量说明：本次未使用 Tavily API Key，仅检索了有限的中外百科与参考站点；数据可能不够精细或最新。请在设置中录入并启用 Tavily API Key，以获得更完整、及时的联网搜索。";
       answer += notice; send({ type: "delta", delta: notice });

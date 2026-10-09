@@ -1,0 +1,68 @@
+import { app, BrowserWindow } from 'electron';
+import { strict as assert } from 'node:assert';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';import os from 'node:os';
+import { pathToFileURL } from 'node:url';
+const value=process.argv.indexOf('--variant');const variant=value>=0?process.argv[value+1]:'local-direct';
+assert.ok(['local-direct','local-mas','api-direct'].includes(variant));
+app.on('window-all-closed',()=>{});
+const timeout=setTimeout(()=>{console.error('Edition UI test timed out');app.exit(1);},60000);
+async function main(){
+  const stage=path.resolve('.edition-build',variant);const temp=await mkdtemp(path.join(os.tmpdir(),'aitip-edition-ui-'));
+  app.setPath('userData',path.join(temp,'profile'));
+  Object.assign(process.env,{AI_TIP_EMBEDDED:'1',AI_TIP_SUPABASE_ENABLED:'0',AI_TIP_DATA_DIR:path.join(temp,'data'),AI_TIP_DIST_DIR:path.join(stage,'dist'),AI_TIP_APP_ROOT:process.cwd()});
+  let server,window;
+  try{
+    await app.whenReady();const module=await import(pathToFileURL(path.join(stage,'dist-electron/server.cjs')));server=await module.startServer(0);
+    const origin=`http://127.0.0.1:${server.address().port}`;
+    const auth=await fetch(origin+'/api/auth/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'Edition tester',email:'edition-ui@example.test',password:'Password12345'})});
+    const {token}=await auth.json();assert.ok(token);
+    window=new BrowserWindow({show:false,width:1280,height:900,useContentSize:true,webPreferences:{offscreen:true,backgroundThrottling:false,nodeIntegration:false,contextIsolation:true,sandbox:true}});window.removeMenu();
+    const js=source=>window.webContents.executeJavaScript(source);
+    await window.loadURL(origin);await js(`localStorage.setItem('ai-tip-token',${JSON.stringify(token)});localStorage.setItem('ai-tip-privacy-consent-v1','accepted');localStorage.setItem('ai-tip-language','zh-CN');true`);await window.loadURL(origin);
+    await js(`window.waitForEdition=async(fn)=>{for(let i=0;i<250;i++){if(fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('UI timeout: '+document.body.innerText);};true`);
+    await js(`waitForEdition(()=>document.querySelector('.app-nav'))`);
+    const local=variant.startsWith('local');
+    const link=await js(`(()=>{const a=document.querySelector('[data-api-edition-download]'),contact=document.querySelector('[data-contact-copy]');return a?{href:a.href,text:a.textContent,above:!!(a.compareDocumentPosition(contact)&Node.DOCUMENT_POSITION_FOLLOWING)}:null;})()`);
+    if(variant==='local-direct'&&module.BUILD_POLICY.showApiDownload){assert.ok(link);assert.equal(link.above,true);assert.equal(link.text,'下载 API 版');assert.equal(link.href,module.BUILD_POLICY.apiDownloadURL);}else {assert.equal(link,null);assert.equal(await js(`!!document.querySelector('[data-api-edition-pending]')`),variant==='local-direct');}
+    await js(`document.querySelector('[data-open-settings]').click();waitForEdition(()=>document.querySelector('.settings-body'))`);
+    const providers=await js(`[...document.querySelectorAll('.settings-grid select option')].map(o=>o.value)`);
+    assert.equal(providers.length,local?2:9);if(local)assert.deepEqual(providers,['local','ollama']);else assert.ok(providers.includes('deepseek'));
+    assert.equal(await js(`document.querySelectorAll('.settings-body input[type=password]').length`),local?0:1);
+    await js(`document.querySelector('.skill-setting-row .toggle').click();true`);
+    assert.equal(await js(`document.querySelectorAll('.settings-body input[type=password]').length`),local?0:2);
+    assert.ok(await js(`!!document.querySelector('.skill-manager-entry [data-open-skills]')`));
+    if(local)assert.ok(!await js(`/Tavily|DeepSeek|导入.*API/.test(document.querySelector('.settings-body').innerText)`));
+    await new Promise(r=>setTimeout(r,100));await writeFile(path.join(stage,'settings-zh-CN.png'),(await window.webContents.capturePage()).toPNG());
+    await js(`document.querySelector('.settings-modal header .icon-button').click();document.querySelector('.app-nav [data-open-skills]').click();waitForEdition(()=>document.querySelector('[data-skill-manager]'))`);
+    const instructions='---\nname: local-reading\ndescription: On-device reading instructions\n---\nUse document evidence.';
+    await js(`(()=>{const data=new DataTransfer();data.items.add(new File([${JSON.stringify(instructions)}],'SKILL.md'));const input=document.querySelector('[data-skill-file]');input.files=data.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await js(`waitForEdition(()=>document.querySelector('[data-skill-name]')?.value==='local-reading')`);await js(`document.querySelector('[data-skill-save]').click();waitForEdition(()=>document.querySelector('[data-skill-id]'))`);
+    await js(`document.querySelector('[data-skill-toggle]').click();waitForEdition(()=>document.querySelector('[data-skill-toggle]').getAttribute('aria-checked')==='true')`);
+    const response=await fetch(origin+'/api/skills',{headers:{authorization:`Bearer ${token}`}});assert.equal((await response.json()).skills[0].enabled,true);
+    await js(`document.querySelector('[aria-label="关闭 Skill 管理"]').click();true`);
+    await writeFile(path.join(stage,'home-zh-CN.png'),(await window.webContents.capturePage()).toPNG());
+    await js(`document.querySelector('[data-open-settings]').click();waitForEdition(()=>document.querySelector('.settings-body'))`);
+    await js(`(()=>{const input=document.querySelector('.settings-body .language-select select');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(input,'en');input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await js(`waitForEdition(()=>document.querySelector('.settings-modal header p').textContent.includes(${JSON.stringify(local?'on-device':'API')}))`);
+    if(local)assert.ok(!await js(`/Tavily|DeepSeek|cloud model API|API provider/.test(document.querySelector('.settings-body').innerText)`));
+    await new Promise(r=>setTimeout(r,250));
+    await writeFile(path.join(stage,'settings-en.png'),(await window.webContents.capturePage()).toPNG());
+    await js(`document.querySelector('.settings-modal header .icon-button').click();true`);
+    if(variant==='local-direct')assert.equal(await js(`document.querySelector('[data-api-edition-download], [data-api-edition-pending]').textContent`),module.BUILD_POLICY.showApiDownload?'Download API Edition':'API Edition download pending');
+    const request=async(route,body,method='POST')=>{const res=await fetch(origin+'/api'+route,{method,headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body)});const result=await res.json();assert.ok(res.ok,JSON.stringify(result));return result;};
+    const upload=new FormData();upload.append('file',new Blob(['# Local reading\nExplain this passage.']),'reading.md');
+    const imported=await fetch(origin+'/api/documents/import',{method:'POST',headers:{authorization:`Bearer ${token}`},body:upload});assert.ok(imported.ok);const {document}=await imported.json();
+    const block=document.blocks.find(b=>b.type==='paragraph');assert.ok(block);
+    const {tip}=await request(`/documents/${document.id}/tips`,{blockId:block.id,selectedText:block.content,startOffset:0,endOffset:block.content.length});
+    await window.loadURL(origin);await js(`window.waitForEdition=async(fn)=>{for(let i=0;i<250;i++){if(fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('UI timeout');};waitForEdition(()=>document.querySelector('.document-card'))`);
+    await js(`document.querySelector('.document-card').click();waitForEdition(()=>document.querySelector('[data-tip-marker-id]'))`);
+    await js(`document.querySelector('[data-tip-marker-id=${JSON.stringify(tip.id)}]').click();waitForEdition(()=>document.querySelector('[data-open-skill-picker]'))`);
+    await js(`document.querySelector('[data-open-skill-picker]').click();waitForEdition(()=>document.querySelector('[data-chat-skill-toggle]'))`);
+    assert.equal(await js(`document.querySelector('[data-chat-skill-toggle]').getAttribute('aria-checked')`),'true');
+    await js(`document.querySelector('[data-chat-skill-toggle]').click();waitForEdition(()=>document.querySelector('[data-chat-skill-toggle]')?.getAttribute('aria-checked')==='false')`);
+    const disabled=await fetch(origin+'/api/skills',{headers:{authorization:`Bearer ${token}`}});assert.equal((await disabled.json()).skills[0].enabled,false);
+    console.log(JSON.stringify({variant,actualClient:true,providers,keyInputsAbsent:local,downloadLink:link,skillImportedAndEnabled:true,chatSkillTogglePersisted:true,bilingual:true,temporaryProfile:temp,macOSTrueRuntime:'NOT_CAUSALLY_VERIFIED',evidence:'COMPONENT_CAPABILITY'}));
+  }finally{window?.destroy();if(server)await new Promise(r=>{server.close(r);server.closeAllConnections();});await rm(path.join(temp,'data'),{recursive:true,force:true}).catch(()=>{});}
+}
+main().then(()=>{clearTimeout(timeout);app.exit(0);},error=>{console.error(error);clearTimeout(timeout);app.exit(1);});

@@ -12,12 +12,21 @@ import { createRememberedLoginStore } from "./login-credentials.mjs";
 import { downloadOfficialOllamaInstaller, fetchLatestOllamaInstallerInfo, ollamaInstallerAssetName, ollamaInstallerStartUrl } from "./ollama-installer.mjs";
 import { isAllowedAppNavigation, isAllowedExternalUrl } from "./navigation-policy.mjs";
 import { ensurePrivacyConsent } from "./privacy-consent.mjs";
+import { createWindowRestorer, mainWindowMenu } from './window-menu.mjs';
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const desktopPolicy = JSON.parse(readFileSync(path.join(appRoot, 'package.json'), 'utf8')).aiTipBuildPolicy || { edition: 'api', distribution: 'direct', cloudModels: true, tavily: true, apiDownloadURL: '', showApiDownload: false };
+if (process.mas && (desktopPolicy.edition !== 'local' || desktopPolicy.distribution !== 'mas')) throw new Error('Mac App Store builds must use the local MAS distribution');
+if (desktopPolicy.edition === 'local' && desktopPolicy.distribution === 'direct') app.setPath('userData', path.join(app.getPath('appData'), 'AI Tip Local'));
+const startupTest = process.argv.includes('--startup-test');
+const startupProfile = startupTest ? mkdtempSync(path.join(tmpdir(), 'aitip-edition-ui-startup-')) : '';
+if (startupTest) app.setPath('userData', startupProfile);
 
 let mainWindow = null;
 let privacyAccepted = false;
 let startupPending = true;
+let quitting = false;
+const showMainWindow = createWindowRestorer({ getWindow: () => mainWindow, create: createWindow, canOpen: () => privacyAccepted && !startupPending });
 let localServer = null;
 let localURL = null;
 let pythonCalculation = null;
@@ -83,7 +92,7 @@ async function bootServer() {
   if (localURL) return localURL;
   process.env.AI_TIP_EMBEDDED = "1";
   process.env.AI_TIP_DESKTOP = "1";
-  if (process.argv.includes("--smoke-test")) process.env.AI_TIP_SUPABASE_ENABLED = "0";
+  if (process.argv.includes("--smoke-test") || startupTest) process.env.AI_TIP_SUPABASE_ENABLED = "0";
   if (process.argv.includes("--smoke-test")) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), "ai-tip-desktop-smoke-"));
   process.env.AI_TIP_DATA_DIR = smokeDataDir || path.join(app.getPath("userData"), "data");
   managedLocalRuntime ||= new BundledLlamaRuntime({ configPath: path.join(app.getPath("userData"), "bundled-local-runtime.json"), helperPath: bundledLlamaServerPath() });
@@ -95,6 +104,8 @@ async function bootServer() {
   process.env.AI_TIP_DIST_DIR = path.join(appRoot, "dist");
   process.env.AI_TIP_APP_ROOT = appRoot;
   const serverModule = await import(new URL("../dist-electron/server.cjs", import.meta.url));
+  const serverPolicy = serverModule.BUILD_POLICY || serverModule.default?.BUILD_POLICY;
+  if (JSON.stringify(serverPolicy) !== JSON.stringify(desktopPolicy)) throw new Error('App edition build mismatch. Rebuild or reinstall this edition.');
   const startServer = serverModule.startServer || serverModule.default?.startServer;
   const configureSecretProtection = serverModule.configureSecretProtection || serverModule.default?.configureSecretProtection;
   const configureLocalModelRuntime = serverModule.configureLocalModelRuntime || serverModule.default?.configureLocalModelRuntime;
@@ -288,7 +299,7 @@ function installMenu() {
     ...(process.platform === "darwin" ? [{ label: app.name, submenu: [{ role: "about" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] }] : []),
     { label: "编辑", submenu: [{ role: "undo", label: "撤销" }, { role: "redo", label: "重做" }, { type: "separator" }, { role: "cut", label: "剪切" }, { role: "copy", label: "复制" }, { role: "paste", label: "粘贴" }, { role: "selectAll", label: "全选" }] },
     { label: "视图", submenu: [{ role: "reload", label: "重新载入" }, { role: "togglefullscreen", label: "切换全屏" }] },
-    { label: "窗口", submenu: [{ role: "minimize", label: "最小化" }, { role: "close", label: "关闭" }] }
+    mainWindowMenu(showMainWindow, app.getLocale().startsWith('en') ? 'en' : 'zh-CN')
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -314,7 +325,10 @@ async function createWindow() {
     }
   });
 
-  mainWindow.once("ready-to-show", () => { if (!smokeTest) mainWindow?.show(); });
+  mainWindow.once("ready-to-show", () => { if (!smokeTest && !startupTest) mainWindow?.show(); });
+  const createdWindow = mainWindow;
+  mainWindow.on('close', event => { if (process.platform === 'darwin' && !quitting && !smokeTest) { event.preventDefault(); createdWindow.hide(); } });
+  mainWindow.on('closed', () => { if (mainWindow === createdWindow) mainWindow = null; });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -950,13 +964,14 @@ async function createWindow() {
     console.log(smokeResult);
     app.quit();
   }
+  return createdWindow;
 }
 
 app.whenReady().then(async () => {
   if (process.argv.includes('--smoke-test')) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), 'ai-tip-desktop-smoke-'));
   privacyAccepted = await ensurePrivacyConsent({
     appRoot, dataDir: smokeDataDir || app.getPath('userData'), locale: app.getLocale(),
-    onReady: process.argv.includes('--smoke-test') ? async window => {
+    onReady: process.argv.includes('--smoke-test') || startupTest ? async window => {
       if (localServer || managedLocalRuntime || rememberedLoginStore || smokeModelServer) throw new Error('Business services started before privacy consent');
       await window.webContents.executeJavaScript(`(async () => {
         for (let i = 0; i < 200 && document.getElementById('consent-checkbox').disabled; i++) await new Promise(r => setTimeout(r, 50));
@@ -999,19 +1014,42 @@ app.whenReady().then(async () => {
   if (process.argv.includes("--smoke-test")) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), "ai-tip-desktop-smoke-"));
   installDesktopIpc();
   installMenu();
-  startupPending = false;
   await createWindow();
+  startupPending = false;
+  app.on("activate", () => { void showMainWindow().catch(console.error); });
+  if (startupTest) {
+    const result = await mainWindow.webContents.executeJavaScript(`(async()=>{
+      const wait=async(fn)=>{for(let i=0;i<300;i++){if(fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Startup UI timeout');};
+      await wait(()=>document.querySelector('[data-accept-privacy]')||document.querySelector('.demo-button'));
+      document.querySelector('[data-accept-privacy]')?.click();await wait(()=>document.querySelector('.demo-button'));
+      document.querySelector('.demo-button').click();await wait(()=>document.querySelector('.app-nav'));
+      const policy=(await fetch('/api/edition').then(r=>r.json())).policy;
+      document.querySelector('[data-open-settings]').click();await wait(()=>document.querySelector('.settings-grid select'));
+      const providers=[...document.querySelectorAll('.settings-grid select option')].map(o=>o.value);
+      if(providers.length!==(policy.edition==='local'?2:9))throw Error('Renderer/server edition mismatch');
+      if(policy.edition==='local'&&document.querySelector('.settings-body input[type=password]'))throw Error('Local build exposes API key entry');
+      if(policy.distribution==='mas'&&document.querySelector('[data-api-edition-download]'))throw Error('MAS build exposes API download link');
+      return {policy,providers,nativePrivacyAccepted:true,businessStartup:true};
+    })()`);
+    const menuItem = Menu.getApplicationMenu()?.getMenuItemById('show-main-window');
+    if (!menuItem) throw new Error('Main window menu is missing');
+    const windowId = mainWindow.id; mainWindow.hide(); menuItem.click(); await showMainWindow();
+    if (mainWindow.id !== windowId || !mainWindow.isVisible()) throw new Error('Main window menu did not restore the real application window');
+    console.log(JSON.stringify({ ...result, actualDesktopEntrypoint: true, actualMainMenuRestored: true, temporaryProfile: startupProfile, evidence: 'COMPONENT_CAPABILITY', macOSRuntime: 'NOT_CAUSALLY_VERIFIED' }));
+    app.quit();
+  }
 }).catch((error) => {
   if (smokeResultPath) {
     try { writeFileSync(smokeResultPath, JSON.stringify({ ok: false, error: error instanceof Error ? error.stack || error.message : String(error) }), "utf8"); } catch {}
   }
   console.error(error);
-  if (!process.argv.includes('--smoke-test')) dialog.showErrorBox('AI Tip', `应用无法启动 / Unable to start\n${error instanceof Error ? error.message : String(error)}\n请重新安装或联系开发者 / Reinstall or contact: 2280810215@qq.com`);
+  if (!process.argv.includes('--smoke-test') && !startupTest) dialog.showErrorBox('AI Tip', `应用无法启动 / Unable to start\n${error instanceof Error ? error.message : String(error)}\n请重新安装或联系开发者 / Reinstall or contact: 2280810215@qq.com`);
   app.exit(1);
 });
 
-app.on("window-all-closed", () => { if (!startupPending) app.quit(); });
+app.on("window-all-closed", () => { if (!startupPending && process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => {
+  quitting = true;
   if (smokeModelServer) { smokeModelServer.close(); smokeModelServer = null; smokeModelURL = ""; }
   localServer?.close();
   void managedLocalRuntime?.stop();

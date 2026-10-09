@@ -13,3 +13,4 @@ data/
 /release.zip
 .release-archive/
 .tmp-llama-runtime/
+.edition-build/

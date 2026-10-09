@@ -1,7 +1,7 @@
 {
   "name": "ai-tip-document-app",
   "private": true,
-  "version": "1.12.16",
+  "version": "1.12.17",
   "description": "面向深度阅读的本地 AI 文档与 Tip 对话应用",
   "author": "AI Tip",
   "license": "MIT",
@@ -15,6 +15,17 @@
     "start": "tsx server/index.ts",
     "typecheck": "tsc -b --pretty false",
     "user-skills:test": "node scripts/verify-user-skills.mjs",
+    "editions:policy:test": "node scripts/test-edition-policy.mjs",
+    "editions:test": "node scripts/verify-editions.mjs",
+    "desktop:prepare:local": "node scripts/build-edition.mjs --edition local --distribution direct",
+    "desktop:prepare:local:mas": "node scripts/build-edition.mjs --edition local --distribution mas",
+    "desktop:prepare:api": "node scripts/build-edition.mjs --edition api --distribution direct",
+    "desktop:start:local": "node scripts/build-edition.mjs --edition local --distribution direct --start",
+    "desktop:start:api": "node scripts/build-edition.mjs --edition api --distribution direct --start",
+    "desktop:dist:local:win": "node scripts/build-edition.mjs --edition local --distribution direct --pack --target win",
+    "desktop:dist:api:win": "node scripts/build-edition.mjs --edition api --distribution direct --pack --target win",
+    "desktop:dist:api:mac": "node scripts/build-edition.mjs --edition api --distribution direct --pack --target dmg",
+    "desktop:dist:local:mac": "node scripts/build-edition.mjs --edition local --distribution direct --pack --target dmg",
     "privacy:test": "node scripts/test-privacy-consent.mjs && electron scripts/test-privacy-consent-electron.mjs",
     "stream-rag:test": "node scripts/test-stream-runtime.mjs && node scripts/test-stream-protocol-negative.mjs && node scripts/test-document-rag.mjs && node --require ./scripts/fixtures/forbid-python-network.cjs scripts/test-python-cancellation.mjs && node scripts/test-chat-preparation-integration.mjs",
     "desktop:prepare": "node scripts/prepare-python-resources.mjs && node scripts/generate-third-party-notices.mjs && pnpm build && esbuild server/index.ts --bundle --platform=node --format=cjs --target=node20 --external:pyodide --external:pdfjs-dist/* --outfile=dist-electron/server.cjs && esbuild server/python-worker.mjs --bundle --platform=node --format=cjs --target=node20 --external:pyodide --outfile=dist-electron/python-worker.cjs",
@@ -32,8 +43,8 @@
     "release:verify:online": "node scripts/test-release-site-online.mjs",
     "release:manifest:win": "node scripts/create-release-manifest.mjs",
     "desktop:dist:win": "pnpm desktop:prepare && electron-builder --win nsis --x64",
-    "desktop:dist:mas": "pnpm desktop:prepare && electron-builder --mac mas --universal",
-    "desktop:dist:mas-dev": "pnpm desktop:prepare && electron-builder --mac mas-dev --universal"
+    "desktop:dist:mas": "node scripts/build-edition.mjs --edition local --distribution mas --pack --target mas",
+    "desktop:dist:mas-dev": "node scripts/build-edition.mjs --edition local --distribution mas --pack --target mas-dev"
   },
   "dependencies": {
     "@tesseract.js-data/chi_sim": "1.0.0",
