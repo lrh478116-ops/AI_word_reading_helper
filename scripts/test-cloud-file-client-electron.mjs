@@ -23,7 +23,7 @@ function makeDocument(id, title) {
   return {
     id, userId: user.id, title, sourceType: "blank", favorite: false, status: "active",
     blocks: [{ id: `${id}-block`, documentId: id, type: "paragraph", content: "本机内容必须保留。", order: 0, contentHash: "", createdAt: stamp, updatedAt: stamp }],
-    createdAt: stamp, updatedAt: stamp, lastOpenedAt: stamp, tipCount: 0,
+    createdAt: stamp, updatedAt: stamp, lastOpenedAt: stamp, tipCount: 0, revision: 1,
     cloudSyncedAt: "2026-08-30T00:00:00.000Z", cloudState: "modified"
   };
 }
@@ -47,6 +47,26 @@ const server = createServer(async (request, response) => {
     if (url.pathname === "/api/cloud/usage") return json(response, { usage: { usedBytes: 1024, limitBytes: 5242880, storageBytes: 512, databaseBytes: 512, objectCount: 2 } });
     if (url.pathname === "/api/settings") return json(response, { settings: { provider: "openai", baseURL: "https://api.openai.com/v1", model: "gpt-5-mini", apiKey: "", systemPrompt: "", webSearchEnabled: false, searchBudgetMode: "free", searchApiKey: "", pythonEnabled: true, reliabilityEnabled: true } });
     if (url.pathname === "/api/ai/status") return json(response, { status: { configured: false, provider: "openai", model: "", reason: "no-api-key", local: false } });
+    const changesMatch = url.pathname.match(/^\/api\/documents\/([0-9a-f-]{36})\/changes$/);
+    if (changesMatch && request.method === "PATCH") {
+      const document = documents.get(changesMatch[1]);
+      if (!document) return json(response, { error: "not found" }, 404);
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const patch = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+      if (patch.baseRevision !== document.revision) return json(response, { error: "revision conflict", code: "DOCUMENT_REVISION_CONFLICT" }, 409);
+      if (typeof patch.clientEditId !== "string" || !Array.isArray(patch.blocks) || !Array.isArray(patch.newBlockIds)) return json(response, { error: "invalid save payload" }, 400);
+      if (typeof patch.title === "string") document.title = patch.title;
+      for (const changedBlock of patch.blocks) {
+        const blockIndex = document.blocks.findIndex((block) => block.id === changedBlock.id);
+        if (blockIndex < 0) return json(response, { error: "unknown block", code: "DOCUMENT_BLOCK_UNKNOWN" }, 400);
+        document.blocks[blockIndex] = { ...document.blocks[blockIndex], ...changedBlock, documentId: document.id, updatedAt: new Date().toISOString() };
+      }
+      document.revision += 1;
+      document.updatedAt = new Date().toISOString();
+      document.cloudState = "modified";
+      trace.push({ action: "save-local", id: document.id, baseRevision: patch.baseRevision, revision: document.revision, clientEditId: patch.clientEditId });
+      return json(response, { document, save: { clientEditId: patch.clientEditId, baseRevision: patch.baseRevision, revision: document.revision, savedBlockCount: patch.blocks.length, durationMs: 1 } });
+    }
     const match = url.pathname.match(/^\/api\/documents\/([0-9a-f-]{36})(\/cloud)?$/);
     if (match) {
       const document = documents.get(match[1]);

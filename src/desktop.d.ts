@@ -16,6 +16,8 @@ declare global {
       chooseModelDirectory: (suggestedPath?: string, runtimeKind?: "llama.cpp" | "ollama") => Promise<{ canceled: boolean; path?: string; selectionToken?: string }>;
       prepareModelDirectory: (selectionToken: string) => Promise<{ directory: string; freeBytes: number; runtime: "llama.cpp" | "ollama"; managed: boolean }>;
       chooseLocalModelFile: (modelId: string) => Promise<{ canceled: boolean; runtime?: import("./local-models").LocalRuntimeInfo }>;
+      onSaveRequested: (listener: (request: { requestId: string; reason: "window-close" | "app-quit" }) => void) => () => void;
+      resolveSaveRequest: (requestId: string, result: { ok: boolean; error?: string; code?: string }) => void;
     };
   }
 }

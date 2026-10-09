@@ -119,7 +119,7 @@ try {
   const saveResponse = await fetch(`${baseURL}/documents/${imported.document.id}`, {
     method: "PATCH",
     headers: { ...headers, "content-type": "application/json" },
-    body: JSON.stringify({ blocks: editedBlocks })
+    body: JSON.stringify({ baseRevision: imported.document.revision, blocks: editedBlocks })
   });
   const saved = await saveResponse.json();
   if (!saveResponse.ok) throw new Error(`DOCX 表格保存失败：${saved.error || saveResponse.status}`);
@@ -138,7 +138,7 @@ try {
   const malformedResponse = await fetch(`${baseURL}/documents/${imported.document.id}`, {
     method: "PATCH",
     headers: { ...headers, "content-type": "application/json" },
-    body: JSON.stringify({ blocks: malformedBlocks })
+    body: JSON.stringify({ baseRevision: reopened.document.revision, blocks: malformedBlocks })
   });
   if (malformedResponse.status !== 400) throw new Error(`畸形表格结构没有被明确拒绝：${malformedResponse.status}`);
   const afterMalformed = await fetch(`${baseURL}/documents/${imported.document.id}`, { headers }).then((response) => response.json());

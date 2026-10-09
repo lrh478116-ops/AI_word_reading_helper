@@ -81,7 +81,7 @@ try {
   assert.ok(actualContextCharacters < 20000, 'RAG must not be bypassed by a multi-megabyte anchor block');
   // Delete the retrieved passage through the real editor API; never mutate a fixture cache directly.
   const changed = document.blocks.slice(0, 8); // Keep original source size, but remove the distant answer.
-  await request(`/documents/${document.id}`, { method: 'PATCH', body: JSON.stringify({ blocks: changed }) });
+  await request(`/documents/${document.id}`, { method: 'PATCH', body: JSON.stringify({ baseRevision: document.revision, blocks: changed }) });
   const second = await chat();
   assert.doesNotMatch(answerInputs.at(-1).messages.find(m => m.role === 'user').content, /copper enclosure/);
   assert.doesNotMatch(second.content, /is copper/);

@@ -37,5 +37,11 @@ contextBridge.exposeInMainWorld("aiTipDesktop", Object.freeze({
     const result = await ipcRenderer.invoke("ai-tip:choose-local-model-file", { modelId });
     if (result?.error) throw new Error(result.error);
     return result;
-  }
+  },
+  onSaveRequested: (listener) => {
+    const handler = (_event, payload) => listener(Object.freeze({ requestId: String(payload?.requestId || ""), reason: payload?.reason === "app-quit" ? "app-quit" : "window-close" }));
+    ipcRenderer.on("ai-tip:save-requested", handler);
+    return () => ipcRenderer.removeListener("ai-tip:save-requested", handler);
+  },
+  resolveSaveRequest: (requestId, result) => ipcRenderer.send("ai-tip:save-result", { requestId, ok: result?.ok === true, error: String(result?.error || ""), code: String(result?.code || "") })
 }));

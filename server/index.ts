@@ -243,7 +243,11 @@ async function readDb(): Promise<Database> {
     }
     tip.depth = depth;
   }
-  return { users: db.users || [], documents: db.documents || [], tips, settings };
+  const documents = (db.documents || []).map((document) => ({
+    ...document,
+    revision: Number.isInteger(document.revision) && document.revision > 0 ? document.revision : 1
+  }));
+  return { users: db.users || [], documents, tips, settings };
 }
 
 async function writeDb(db: Database, _options: { skipCloud?: boolean } = {}) {
@@ -304,7 +308,7 @@ async function hydrateCloudUser(db: Database, user: StoredUser, token: string, f
     const local = localDocuments.get(row.id);
     if (local && locallyModified(local)) continue;
     const latestRemote = remoteTips.filter((tip) => tip.document_id === row.id).reduce((latest, tip) => tip.updated_at > latest ? tip.updated_at : latest, row.updated_at);
-    localDocuments.set(row.id, { ...row.payload, userId: user.id, cloudSyncedAt: latestRemote, cloudState: "synced" });
+    localDocuments.set(row.id, { ...row.payload, userId: user.id, revision: Number.isInteger(row.payload.revision) && row.payload.revision > 0 ? row.payload.revision : 1, cloudSyncedAt: latestRemote, cloudState: "synced" });
   }
   const preservedTipDocumentIds = new Set([...localDocuments.values()].filter(locallyModified).map((document) => document.id));
   const localTips = db.tips.filter((tip) => tip.userId === user.id && preservedTipDocumentIds.has(tip.documentId));
@@ -354,6 +358,38 @@ function normalizeTableData(value: unknown): PdfTableData {
     return { content, header: typeof candidate.header === "boolean" ? candidate.header : rowIndex < headerRows, colSpan, rowSpan };
   }));
   return { rows, headerRows, cells, source: raw.source === "pdf" ? "pdf" : "docx" };
+}
+
+function normalizeEditableDocumentBlock(document: DocumentItem, value: unknown, previous: DocumentBlock | undefined, order: number, requireId = false): DocumentBlock {
+  if (!value || typeof value !== "object") throw new Error("文档块不是对象");
+  const item = value as Partial<DocumentBlock>;
+  if (!documentBlockTypes.has(item.type as DocumentBlock["type"])) throw new Error("文档块类型无效");
+  if (previous && item.type !== previous.type) throw new Error("已有文档块不能改变类型");
+  const requestedId = typeof item.id === "string" && item.id.length <= 160 ? item.id : "";
+  if (requireId && !requestedId) throw new Error("文档块 ID 无效");
+  const id = previous?.id || requestedId || makeId();
+  if (typeof item.documentId === "string" && item.documentId !== document.id) throw new Error("文档块所属文档不匹配");
+  let content = String(item.content ?? "").slice(0, 100_000);
+  let table: PdfTableData | undefined;
+  if (item.type === "table") {
+    table = normalizeTableData(item.table);
+    content = tableContent(table.rows).slice(0, 100_000);
+  }
+  const timestamp = now();
+  const normalized: DocumentBlock = {
+    id,
+    documentId: document.id,
+    type: item.type as DocumentBlock["type"],
+    content,
+    order,
+    level: item.type === "heading" ? Math.max(1, Math.min(6, Math.trunc(Number(item.level) || 2))) : undefined,
+    contentHash: hash(content),
+    createdAt: previous?.createdAt || timestamp,
+    updatedAt: timestamp
+  };
+  if (table) normalized.table = table;
+  if (previous?.pdf) normalized.pdf = previous.pdf;
+  return normalized;
 }
 
 const legacyTransformerSeedBlocks: Array<Pick<DocumentBlock, "type" | "content" | "level">> = [
@@ -1037,7 +1073,7 @@ function compactDocument(document: DocumentItem, tips: TipThread[]): DocumentIte
   const documentTips = tips.filter((tip) => tip.documentId === document.id);
   const latestChange = documentTips.reduce((latest, tip) => tip.updatedAt > latest ? tip.updatedAt : latest, document.updatedAt);
   const cloudState = !document.cloudSyncedAt ? "local" : latestChange > document.cloudSyncedAt ? "modified" : "synced";
-  return { ...document, tipCount: documentTips.length, cloudState };
+  return { ...document, revision: Number.isInteger(document.revision) && document.revision > 0 ? document.revision : 1, tipCount: documentTips.length, cloudState };
 }
 
 async function ensureDocumentSource(document: DocumentItem, cloudToken?: string) {
@@ -1138,7 +1174,7 @@ app.post("/api/documents", auth, async (req: AuthedRequest, res) => {
   const id = makeId();
   const timestamp = now();
   const document: DocumentItem = {
-    id, userId: req.user!.id, title: "无标题文档", sourceType: "blank", favorite: false, status: "active",
+    id, userId: req.user!.id, revision: 1, title: "无标题文档", sourceType: "blank", favorite: false, status: "active",
     blocks: [block(id, "paragraph", "", 0)], createdAt: timestamp, updatedAt: timestamp, lastOpenedAt: timestamp, tipCount: 0
   };
   db.documents.push(document);
@@ -1254,48 +1290,85 @@ app.patch("/api/documents/:id", auth, async (req: AuthedRequest, res) => {
   const db = await readDb();
   const document = db.documents.find((item) => item.id === req.params.id && item.userId === req.user!.id);
   if (!document) return res.status(404).json({ error: "文档不存在" });
-  const body = req.body as Partial<DocumentItem>;
+  const body = req.body as Partial<DocumentItem> & { baseRevision?: number };
+  const changesContent = typeof body.title === "string" || Array.isArray(body.blocks);
+  if (changesContent) {
+    if (!Number.isInteger(body.baseRevision) || Number(body.baseRevision) < 1) return res.status(428).json({ error: "保存文档内容时必须提供当前 revision", code: "DOCUMENT_REVISION_REQUIRED" });
+    if (body.baseRevision !== document.revision) return res.status(409).json({ error: `文档已被其他保存更新（当前 revision ${document.revision}）`, code: "DOCUMENT_REVISION_CONFLICT", currentRevision: document.revision });
+  }
   if (typeof body.title === "string") document.title = body.title.trim().slice(0, 160) || "无标题文档";
   if (typeof body.favorite === "boolean") document.favorite = body.favorite;
   if (body.status === "active" || body.status === "deleted") document.status = body.status;
   if (Array.isArray(body.blocks)) {
     try {
       const previousBlocks = new Map(document.blocks.map((item) => [item.id, item]));
-      document.blocks = body.blocks.slice(0, 2000).map((item, order) => {
-        if (!item || typeof item !== "object" || !documentBlockTypes.has(item.type)) throw new Error(`第 ${order + 1} 个文档块类型无效`);
-        const previous = typeof item.id === "string" ? previousBlocks.get(item.id) : undefined;
-        const id = previous?.id || (typeof item.id === "string" && item.id.length <= 160 ? item.id : makeId());
-        let content = String(item.content ?? "").slice(0, 100_000);
-        let table: PdfTableData | undefined;
-        if (item.type === "table") {
-          table = normalizeTableData(item.table);
-          content = tableContent(table.rows).slice(0, 100_000);
-        }
-        const timestamp = now();
-        const normalized: DocumentBlock = {
-          id,
-          documentId: document.id,
-          type: item.type,
-          content,
-          order,
-          level: item.type === "heading" ? Math.max(1, Math.min(6, Math.trunc(Number(item.level) || 2))) : undefined,
-          contentHash: hash(content),
-          createdAt: previous?.createdAt || timestamp,
-          updatedAt: timestamp
-        };
-        if (table) normalized.table = table;
-        if (previous?.pdf) normalized.pdf = previous.pdf;
-        return normalized;
-      });
+      document.blocks = body.blocks.slice(0, 2000).map((item, order) => normalizeEditableDocumentBlock(document, item, typeof item?.id === "string" ? previousBlocks.get(item.id) : undefined, order));
     } catch (error) {
       return res.status(400).json({ error: `文档块保存失败：${error instanceof Error ? error.message : "结构无效"}` });
     }
     const tips = db.tips.filter((tip) => tip.documentId === document.id && tip.userId === req.user!.id);
     recoverAnchors(document, tips);
   }
+  if (changesContent) document.revision += 1;
   document.updatedAt = now();
   await writeDb(db);
   res.json({ document: compactDocument(document, db.tips) });
+});
+
+app.patch("/api/documents/:id/changes", auth, async (req: AuthedRequest, res) => {
+  const startedAt = performance.now();
+  const db = await readDb();
+  const document = db.documents.find((item) => item.id === req.params.id && item.userId === req.user!.id);
+  if (!document) return res.status(404).json({ error: "文档不存在" });
+  const body = req.body as { baseRevision?: unknown; clientEditId?: unknown; title?: unknown; blocks?: unknown; newBlockIds?: unknown };
+  const baseRevision = Number(body.baseRevision);
+  const clientEditId = String(body.clientEditId || "");
+  if (!Number.isInteger(baseRevision) || baseRevision < 1) return res.status(400).json({ error: "文档 revision 无效", code: "DOCUMENT_REVISION_REQUIRED" });
+  if (baseRevision !== document.revision) return res.status(409).json({ error: `文档已被其他保存更新（当前 revision ${document.revision}）`, code: "DOCUMENT_REVISION_CONFLICT", currentRevision: document.revision });
+  if (!/^[a-z0-9][a-z0-9-]{7,79}$/i.test(clientEditId)) return res.status(400).json({ error: "保存请求 ID 无效", code: "DOCUMENT_EDIT_ID_INVALID" });
+  const hasTitle = Object.prototype.hasOwnProperty.call(body, "title");
+  if (hasTitle && typeof body.title !== "string") return res.status(400).json({ error: "文档标题无效", code: "DOCUMENT_TITLE_INVALID" });
+  if (!Array.isArray(body.blocks)) return res.status(400).json({ error: "文档改动 blocks 必须是数组", code: "DOCUMENT_BLOCKS_INVALID" });
+  if (body.blocks.length > 2000) return res.status(413).json({ error: "单次保存的文档块过多", code: "DOCUMENT_BLOCKS_LIMIT" });
+  if (!Array.isArray(body.newBlockIds) || body.newBlockIds.some((id) => typeof id !== "string")) return res.status(400).json({ error: "新文档块 ID 列表无效", code: "DOCUMENT_NEW_BLOCKS_INVALID" });
+  if (!hasTitle && body.blocks.length === 0) return res.status(400).json({ error: "保存请求没有任何改动", code: "DOCUMENT_CHANGES_EMPTY" });
+  const submittedIds = body.blocks.map((item) => item && typeof item === "object" ? String((item as { id?: unknown }).id || "") : "");
+  if (submittedIds.some((id) => !id || id.length > 160)) return res.status(400).json({ error: "文档块 ID 无效", code: "DOCUMENT_BLOCK_ID_INVALID" });
+  if (new Set(submittedIds).size !== submittedIds.length) return res.status(400).json({ error: "同一保存请求包含重复文档块", code: "DOCUMENT_BLOCK_DUPLICATE" });
+  const newBlockIds = new Set(body.newBlockIds as string[]);
+  if (newBlockIds.size !== body.newBlockIds.length || [...newBlockIds].some((id) => !submittedIds.includes(id))) return res.status(400).json({ error: "新文档块 ID 必须唯一且出现在 blocks 中", code: "DOCUMENT_NEW_BLOCKS_INVALID" });
+  const existingById = new Map(document.blocks.map((block) => [block.id, block]));
+  const replacements = new Map<string, DocumentBlock>();
+  const additions: DocumentBlock[] = [];
+  try {
+    for (let index = 0; index < body.blocks.length; index += 1) {
+      const item = body.blocks[index];
+      const id = submittedIds[index];
+      const previous = existingById.get(id);
+      const declaredNew = newBlockIds.has(id);
+      if (!previous && !declaredNew) return res.status(400).json({ error: `文档块 ${id} 不存在`, code: "DOCUMENT_BLOCK_UNKNOWN" });
+      if (previous && declaredNew) return res.status(409).json({ error: `新文档块 ID ${id} 已存在`, code: "DOCUMENT_BLOCK_ALREADY_EXISTS" });
+      const normalized = normalizeEditableDocumentBlock(document, item, previous, previous?.order ?? document.blocks.length + additions.length, true);
+      if (previous) replacements.set(id, normalized); else additions.push(normalized);
+    }
+  } catch (error) {
+    return res.status(400).json({ error: `文档块保存失败：${error instanceof Error ? error.message : "结构无效"}`, code: "DOCUMENT_BLOCK_INVALID" });
+  }
+  if (hasTitle) document.title = String(body.title).trim().slice(0, 160) || "无标题文档";
+  document.blocks = [...document.blocks.map((block) => replacements.get(block.id) || block), ...additions]
+    .map((block, order) => block.order === order ? block : { ...block, order });
+  if (body.blocks.length) {
+    const tips = db.tips.filter((tip) => tip.documentId === document.id && tip.userId === req.user!.id);
+    recoverAnchors(document, tips);
+  }
+  const previousRevision = document.revision;
+  document.revision += 1;
+  document.updatedAt = now();
+  await writeDb(db);
+  res.json({
+    document: compactDocument(document, db.tips),
+    save: { clientEditId, baseRevision: previousRevision, revision: document.revision, savedBlockCount: body.blocks.length, durationMs: Math.max(0, Math.round((performance.now() - startedAt) * 100) / 100) }
+  });
 });
 
 app.delete("/api/documents/:id", auth, async (req: AuthedRequest, res) => {
@@ -1473,7 +1546,7 @@ app.post("/api/documents/import", auth, upload.single("file"), async (req: Authe
       return res.status(422).json({ error: `文档解析失败：${error instanceof Error ? error.message : "未知格式错误"}` });
     }
     const document: DocumentItem = {
-      id, userId: req.user!.id, title: path.basename(safeOriginalName, ext), sourceType: ext === ".txt" ? "txt" : ext === ".docx" ? "docx" : ext === ".pdf" ? "pdf" : "markdown",
+      id, userId: req.user!.id, revision: 1, title: path.basename(safeOriginalName, ext), sourceType: ext === ".txt" ? "txt" : ext === ".docx" ? "docx" : ext === ".pdf" ? "pdf" : "markdown",
       originalName: safeOriginalName, sourceBytes: input.byteLength, favorite: false, status: "active", blocks, pdfStructure,
       createdAt: timestamp, updatedAt: timestamp, lastOpenedAt: timestamp, tipCount: 0
     };

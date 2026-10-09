@@ -186,8 +186,10 @@ export const api = {
     return new Uint8Array(await response.arrayBuffer());
   },
   createDocument: () => request<{ document: DocumentItem }>("/documents", { method: "POST", body: "{}" }),
-  updateDocument: (id: string, patch: Partial<Pick<DocumentItem, "title" | "favorite" | "status">> & { blocks?: DocumentBlock[] }) =>
+  updateDocument: (id: string, patch: Partial<Pick<DocumentItem, "title" | "favorite" | "status">> & { blocks?: DocumentBlock[]; baseRevision?: number }) =>
     request<{ document: DocumentItem }>(`/documents/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  saveDocumentChanges: (id: string, change: { baseRevision: number; clientEditId: string; title?: string; blocks: DocumentBlock[]; newBlockIds: string[] }) =>
+    request<{ document: DocumentItem; save: { clientEditId: string; baseRevision: number; revision: number; savedBlockCount: number; durationMs: number } }>(`/documents/${id}/changes`, { method: "PATCH", body: JSON.stringify(change) }),
   deleteDocument: (id: string, permanent = false) =>
     request<{ ok: boolean }>(`/documents/${id}?permanent=${permanent}`, { method: "DELETE" }),
   cloudUsage: () => request<{ usage: CloudUsage }>("/cloud/usage"),

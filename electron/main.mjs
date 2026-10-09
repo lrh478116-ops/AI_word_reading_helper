@@ -13,19 +13,26 @@ import { downloadOfficialOllamaInstaller, fetchLatestOllamaInstallerInfo, ollama
 import { isAllowedAppNavigation, isAllowedExternalUrl } from "./navigation-policy.mjs";
 import { ensurePrivacyConsent } from "./privacy-consent.mjs";
 import { createWindowRestorer, mainWindowMenu } from './window-menu.mjs';
+import { createSaveRequestBroker } from './save-request-broker.mjs';
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const desktopPolicy = JSON.parse(readFileSync(path.join(appRoot, 'package.json'), 'utf8')).aiTipBuildPolicy || { edition: 'api', distribution: 'direct', cloudModels: true, tavily: true, apiDownloadURL: '', showApiDownload: false };
 if (process.mas && (desktopPolicy.edition !== 'local' || desktopPolicy.distribution !== 'mas')) throw new Error('Mac App Store builds must use the local MAS distribution');
 if (desktopPolicy.edition === 'local' && desktopPolicy.distribution === 'direct') app.setPath('userData', path.join(app.getPath('appData'), 'AI Tip Local'));
 const startupTest = process.argv.includes('--startup-test');
-const startupProfile = startupTest ? mkdtempSync(path.join(tmpdir(), 'aitip-edition-ui-startup-')) : '';
-if (startupTest) app.setPath('userData', startupProfile);
+const saveLifecycleTest = process.argv.includes('--save-lifecycle-test');
+const saveQuitTest = process.argv.includes('--save-quit-test');
+const saveTest = saveLifecycleTest || saveQuitTest;
+const startupProfile = startupTest || saveTest ? mkdtempSync(path.join(tmpdir(), startupTest ? 'aitip-edition-ui-startup-' : saveQuitTest ? 'aitip-save-quit-' : 'aitip-save-lifecycle-')) : '';
+if (startupTest || saveTest) app.setPath('userData', startupProfile);
 
 let mainWindow = null;
 let privacyAccepted = false;
 let startupPending = true;
 let quitting = false;
+let quitApproved = false;
+let quitFlushInProgress = null;
+let resourcesClosed = false;
 const showMainWindow = createWindowRestorer({ getWindow: () => mainWindow, create: createWindow, canOpen: () => privacyAccepted && !startupPending });
 let localServer = null;
 let localURL = null;
@@ -45,10 +52,48 @@ const modelSecurityScopeStops = [];
 let modelDirectoryPreparation = null;
 let rememberedLoginStore = null;
 let smokeContactCopied = false;
+let saveLifecycleCloseFailure = "";
+let saveQuitTestContext = null;
+let lastSaveRequestId = "";
 const smokeResultPath = process.env.AI_TIP_SMOKE_RESULT_PATH ? path.resolve(process.env.AI_TIP_SMOKE_RESULT_PATH) : "";
+const saveLifecycleResultPath = process.env.AI_TIP_SAVE_LIFECYCLE_RESULT_PATH ? path.resolve(process.env.AI_TIP_SAVE_LIFECYCLE_RESULT_PATH) : "";
+const saveQuitResultPath = process.env.AI_TIP_SAVE_QUIT_RESULT_PATH ? path.resolve(process.env.AI_TIP_SAVE_QUIT_RESULT_PATH) : "";
 const storeAssetDir = process.env.AI_TIP_STORE_ASSET_DIR ? path.resolve(process.env.AI_TIP_STORE_ASSET_DIR) : "";
 const storeAssetNames = new Set(["01-local-models.png", "02-word-table.png", "03-pdf-tip.png", "04-tip-tree.png"]);
 if (storeAssetDir) app.commandLine.appendSwitch("force-device-scale-factor", "1");
+
+const saveRequestBroker = createSaveRequestBroker({
+  timeoutMs: 10_000,
+  send: (payload) => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed() || mainWindow.webContents.isLoadingMainFrame()) return false;
+    lastSaveRequestId = payload.requestId;
+    mainWindow.webContents.send("ai-tip:save-requested", payload);
+    return true;
+  }
+});
+
+function closeResources() {
+  if (resourcesClosed) return;
+  resourcesClosed = true;
+  saveRequestBroker.cancelAll("Application resources are closing");
+  if (smokeModelServer) { smokeModelServer.close(); smokeModelServer = null; smokeModelURL = ""; }
+  localServer?.close(); localServer = null; localURL = null;
+  void managedLocalRuntime?.stop();
+  void managedOllamaRuntime?.stop();
+  modelDirectorySelections.clear();
+  ollamaInstallerSelections.clear();
+  for (const controller of ollamaInstallerDownloads.values()) controller.abort();
+  ollamaInstallerDownloads.clear();
+  for (const stopAccessing of modelSecurityScopeStops.splice(0)) { try { stopAccessing(); } catch {} }
+  if (smokeDataDir) { try { rmSync(smokeDataDir, { recursive: true, force: true }); } catch {} smokeDataDir = null; }
+}
+
+function saveFailureText(error) {
+  const detail = error instanceof Error ? error.message : String(error || "Unknown save error");
+  return app.getLocale().startsWith("en")
+    ? { title: "Document could not be saved", detail: `AI Tip kept the window open because the latest changes were not saved.\n\nReason: ${detail}`, retry: "Retry Save", cancelClose: "Cancel Close", cancelQuit: "Cancel Quit", discard: "Quit Without Saving" }
+    : { title: "文档未能保存", detail: `AI Tip 已保留当前窗口，因为最新修改尚未保存。\n\n原因：${detail}`, retry: "重试保存", cancelClose: "取消关闭", cancelQuit: "取消退出", discard: "放弃未保存内容并退出" };
+}
 
 function bundledLlamaServerPath() {
   const platformFolder = process.platform === "win32" ? "win-x64" : process.arch === "arm64" ? "mac-arm64" : "mac-x64";
@@ -92,8 +137,8 @@ async function bootServer() {
   if (localURL) return localURL;
   process.env.AI_TIP_EMBEDDED = "1";
   process.env.AI_TIP_DESKTOP = "1";
-  if (process.argv.includes("--smoke-test") || startupTest) process.env.AI_TIP_SUPABASE_ENABLED = "0";
-  if (process.argv.includes("--smoke-test")) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), "ai-tip-desktop-smoke-"));
+  if (process.argv.includes("--smoke-test") || startupTest || saveTest) process.env.AI_TIP_SUPABASE_ENABLED = "0";
+  if (process.argv.includes("--smoke-test") || saveTest) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), saveQuitTest ? "ai-tip-save-quit-data-" : saveLifecycleTest ? "ai-tip-save-lifecycle-data-" : "ai-tip-desktop-smoke-"));
   process.env.AI_TIP_DATA_DIR = smokeDataDir || path.join(app.getPath("userData"), "data");
   managedLocalRuntime ||= new BundledLlamaRuntime({ configPath: path.join(app.getPath("userData"), "bundled-local-runtime.json"), helperPath: bundledLlamaServerPath() });
   managedOllamaRuntime ||= new ManagedOllamaRuntime({ configPath: path.join(app.getPath("userData"), "ollama-runtime.json"), isMas: Boolean(process.mas) });
@@ -148,6 +193,11 @@ async function bootServer() {
 
 function installDesktopIpc() {
   if (!privacyAccepted) throw new Error('Privacy consent is required before installing desktop capabilities');
+  ipcMain.removeAllListeners("ai-tip:save-result");
+  ipcMain.on("ai-tip:save-result", (event, payload = {}) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) return;
+    saveRequestBroker.accept(String(payload.requestId || ""), { ok: payload.ok === true, error: String(payload.error || ""), code: String(payload.code || "") });
+  });
   ipcMain.removeHandler("ai-tip:copy-text");
   ipcMain.handle("ai-tip:copy-text", async (_event, payload = {}) => {
     const value = String(payload?.value || "").slice(0, 10_000);
@@ -325,10 +375,40 @@ async function createWindow() {
     }
   });
 
-  mainWindow.once("ready-to-show", () => { if (!smokeTest && !startupTest) mainWindow?.show(); });
+  mainWindow.once("ready-to-show", () => { if (!smokeTest && !startupTest && !saveTest) mainWindow?.show(); });
   const createdWindow = mainWindow;
-  mainWindow.on('close', event => { if (process.platform === 'darwin' && !quitting && !smokeTest) { event.preventDefault(); createdWindow.hide(); } });
-  mainWindow.on('closed', () => { if (mainWindow === createdWindow) mainWindow = null; });
+  let allowWindowClose = false;
+  let closeFlushInProgress = null;
+  const requestWindowClose = () => {
+    if (closeFlushInProgress || createdWindow.isDestroyed()) return;
+    let retry = false;
+    closeFlushInProgress = (async () => {
+      try {
+        await saveRequestBroker.request("window-close");
+        if (createdWindow.isDestroyed()) return;
+        if (process.platform === "darwin" && !quitting) createdWindow.hide();
+        else { allowWindowClose = true; createdWindow.close(); }
+      } catch (error) {
+        if (createdWindow.isDestroyed()) return;
+        createdWindow.show(); createdWindow.focus();
+        if (saveLifecycleTest) { saveLifecycleCloseFailure = error instanceof Error ? error.message : String(error); return; }
+        const labels = saveFailureText(error);
+        const choice = await dialog.showMessageBox(createdWindow, { type: "error", title: labels.title, message: labels.title, detail: labels.detail, buttons: [labels.retry, labels.cancelClose], defaultId: 0, cancelId: 1, noLink: true });
+        retry = choice.response === 0;
+      }
+    })().finally(() => {
+      closeFlushInProgress = null;
+      if (retry) setImmediate(requestWindowClose);
+    });
+  };
+  mainWindow.on('close', event => {
+    if (allowWindowClose || quitApproved) return;
+    event.preventDefault();
+    requestWindowClose();
+  });
+  mainWindow.on('closed', () => {
+    if (mainWindow === createdWindow) { mainWindow = null; saveRequestBroker.cancelAll("Main window was destroyed"); }
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -419,6 +499,9 @@ async function createWindow() {
         element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
       };
       window.__desktopSmokeStep = 'auth language';
+      await waitUntil(() => document.querySelector('[data-accept-privacy]') || document.querySelector('.demo-button'), 'renderer privacy or login');
+      document.querySelector('[data-accept-privacy]')?.click();
+      await waitFor('.demo-button');
       const authLanguage = await waitFor('.auth-language select');
       change(authLanguage, 'zh-CN');
       await new Promise(resolve => setTimeout(resolve, 80));
@@ -967,11 +1050,180 @@ async function createWindow() {
   return createdWindow;
 }
 
+async function runSaveLifecycleTest() {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || !localURL) throw new Error("Save lifecycle test window is unavailable");
+  const setup = await window.webContents.executeJavaScript(`(async () => {
+    const wait = async (test, label) => { for (let index = 0; index < 300; index += 1) { const value = test(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error('Save lifecycle UI timeout: ' + label); };
+    await wait(() => document.querySelector('[data-accept-privacy]') || document.querySelector('.demo-button'), 'renderer privacy or login');
+    document.querySelector('[data-accept-privacy]')?.click();
+    await wait(() => document.querySelector('.demo-button'), 'local login');
+    document.querySelector('.demo-button').click();
+    await wait(() => document.querySelector('.app-nav'), 'library');
+    const token = localStorage.getItem('ai-tip-token');
+    const response = await fetch('/api/documents', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: '{}' });
+    if (!response.ok) throw new Error('Could not create lifecycle document: ' + response.status);
+    const created = await response.json();
+    const stamp = new Date().toISOString();
+    const blocks = [
+      { ...created.document.blocks[0], content: 'Original first block' },
+      { id: crypto.randomUUID(), documentId: created.document.id, type: 'paragraph', content: 'Untouched second block', order: 1, contentHash: '', createdAt: stamp, updatedAt: stamp },
+      { id: crypto.randomUUID(), documentId: created.document.id, type: 'quote', content: 'Untouched third block', order: 2, contentHash: '', createdAt: stamp, updatedAt: stamp }
+    ];
+    const preparedResponse = await fetch('/api/documents/' + created.document.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: JSON.stringify({ baseRevision: 1, title: 'Lifecycle source', blocks }) });
+    const prepared = await preparedResponse.json();
+    if (!preparedResponse.ok || prepared.document.revision !== 2) throw new Error('Could not prepare lifecycle document: ' + JSON.stringify(prepared));
+    return { token, documentId: created.document.id, firstBlockId: blocks[0].id, untouchedBlockIds: blocks.slice(1).map(block => block.id) };
+  })()`);
+  await saveRequestBroker.request("window-close");
+  await window.loadURL(localURL);
+  const rendererSetup = await window.webContents.executeJavaScript(`(async () => {
+    const wait = async (test, label) => { for (let index = 0; index < 300; index += 1) { const value = test(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error('Save lifecycle UI timeout: ' + label); };
+    const card = await wait(() => document.querySelector('.document-card'), 'document card'); card.click();
+    await wait(() => document.querySelector('[data-editor-document="${setup.documentId}"]'), 'editor');
+    const realFetch = window.fetch.bind(window); window.__saveLifecycleRequests = []; window.__failNextLifecycleSave = true; window.__blockNextLifecycleSave = false; window.__blockFollowingLifecycleSave = false; window.__lifecycleSaveBlocked = false; window.__lifecycleFollowingSaveBlocked = false;
+    window.fetch = async (input, init = {}) => {
+      const url = String(input instanceof Request ? input.url : input); const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (url.includes('/api/documents/${setup.documentId}/changes') && method === 'PATCH') {
+        const body = JSON.parse(String(init.body || '{}')); window.__saveLifecycleRequests.push(body);
+        if (window.__failNextLifecycleSave) { window.__failNextLifecycleSave = false; return new Response(JSON.stringify({ error: 'controlled close save failure', code: 'CONTROLLED_SAVE_FAILURE' }), { status: 500, headers: { 'Content-Type': 'application/json' } }); }
+        if (window.__blockNextLifecycleSave) { window.__blockNextLifecycleSave = false; window.__lifecycleSaveBlocked = true; await new Promise(resolve => { window.__releaseLifecycleSave = resolve; }); }
+        else if (window.__blockFollowingLifecycleSave) { window.__blockFollowingLifecycleSave = false; window.__lifecycleFollowingSaveBlocked = true; await new Promise(resolve => { window.__releaseLifecycleFollowingSave = resolve; }); }
+      }
+      return realFetch(input, init);
+    };
+    const title = document.querySelector('.document-title'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(title, 'Saved before native close'); title.dispatchEvent(new Event('input', { bubbles: true }));
+    const firstBlock = document.querySelector('[data-block-id="${setup.firstBlockId}"]'); firstBlock.innerText = 'Saved block before native close'; firstBlock.dispatchEvent(new Event('input', { bubbles: true }));
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    window.dispatchEvent(new Event('offline'));
+    await wait(() => document.querySelector('.save-state')?.textContent, 'pending save state');
+    return { state: document.querySelector('.save-state').textContent, offline: navigator.onLine === false };
+  })()`);
+  if (!/等待保存|Save pending/.test(rendererSetup.state) || /离线|Offline/.test(rendererSetup.state) || rendererSetup.offline !== true) throw new Error(`Local save state incorrectly depends on internet status: ${JSON.stringify(rendererSetup)}`);
+
+  window.close();
+  for (let index = 0; index < 300 && !saveLifecycleCloseFailure; index += 1) await new Promise(resolve => setTimeout(resolve, 20));
+  if (!saveLifecycleCloseFailure || window.isDestroyed()) throw new Error("A failed renderer save did not keep the real main window open");
+  const failureUi = await window.webContents.executeJavaScript(`({ state: document.querySelector('.save-state')?.textContent || '', requests: window.__saveLifecycleRequests.length })`);
+  if (!failureUi.state.includes("controlled close save failure") || failureUi.requests !== 1) throw new Error(`Save failure reason was not visible in the renderer: ${JSON.stringify(failureUi)}`);
+
+  await window.webContents.executeJavaScript(`window.__blockNextLifecycleSave = true; window.__lifecycleSaveBlocked = false; true`);
+  const closed = new Promise((resolve) => window.once("closed", resolve));
+  window.close();
+  for (let index = 0; index < 300; index += 1) {
+    if (window.isDestroyed()) throw new Error("The main window closed before the pending save completed");
+    if (await window.webContents.executeJavaScript("window.__lifecycleSaveBlocked === true")) break;
+    if (index === 299) throw new Error("The retry save never reached the controlled in-flight state");
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  await new Promise(resolve => setTimeout(resolve, 150));
+  if (window.isDestroyed()) throw new Error("The main window closed while the save request was still blocked");
+  await window.webContents.executeJavaScript(`(() => {
+    window.__blockFollowingLifecycleSave = true;
+    const title = document.querySelector('.document-title');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(title, 'Newest title typed while native close was waiting');
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    const firstBlock = document.querySelector('[data-block-id="${setup.firstBlockId}"]'); firstBlock.innerText = 'Newest block typed while native close was waiting'; firstBlock.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await window.webContents.executeJavaScript("window.aiTipDesktop.resolveSaveRequest('forged-request-id', { ok: true }); true");
+  await new Promise(resolve => setTimeout(resolve, 60));
+  if (window.isDestroyed() || saveRequestBroker.pendingCount !== 1) throw new Error("A forged request ID unlocked the close handshake");
+  const forgedSender = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(appRoot, "electron", "preload.cjs") } });
+  try {
+    await forgedSender.loadURL("data:text/html;charset=utf-8,<title>forged sender</title>");
+    await forgedSender.webContents.executeJavaScript(`window.aiTipDesktop.resolveSaveRequest(${JSON.stringify(lastSaveRequestId)}, { ok: true }); true`);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    if (window.isDestroyed() || saveRequestBroker.pendingCount !== 1) throw new Error("A reply from another BrowserWindow unlocked the close handshake");
+  } finally { forgedSender.destroy(); }
+  const retryTrace = await window.webContents.executeJavaScript(`({ requests: window.__saveLifecycleRequests, state: document.querySelector('.save-state')?.textContent || '' })`);
+  if (retryTrace.requests.length !== 2 || retryTrace.requests.some((body) => body.baseRevision !== 2 || body.blocks.length !== 1 || body.blocks[0].id !== setup.firstBlockId || typeof body.clientEditId !== "string")) throw new Error(`Close retry did not use correlated incremental saves: ${JSON.stringify(retryTrace)}`);
+  await window.webContents.executeJavaScript("window.__releaseLifecycleSave(); true");
+  for (let index = 0; index < 300; index += 1) {
+    if (window.isDestroyed()) throw new Error("The main window closed before the edit made during the first save was persisted");
+    if (await window.webContents.executeJavaScript("window.__lifecycleFollowingSaveBlocked === true")) break;
+    if (index === 299) throw new Error("The edit made during the first save did not start a follow-up revision");
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  const followUpTrace = await window.webContents.executeJavaScript(`({ requests: window.__saveLifecycleRequests, state: document.querySelector('.save-state')?.textContent || '' })`);
+  if (followUpTrace.requests.length !== 3 || followUpTrace.requests[2].baseRevision !== 3 || followUpTrace.requests[2].title !== "Newest title typed while native close was waiting" || followUpTrace.requests[2].blocks.length !== 1 || followUpTrace.requests[2].blocks[0].id !== setup.firstBlockId || followUpTrace.requests[2].blocks[0].content !== "Newest block typed while native close was waiting") throw new Error(`The in-flight edit did not use the next incremental revision: ${JSON.stringify(followUpTrace)}`);
+  if (new Set(followUpTrace.requests.map((body) => body.clientEditId)).size !== 3) throw new Error("Save retries and follow-up revisions must have distinct client edit IDs");
+  await window.webContents.executeJavaScript("window.__releaseLifecycleFollowingSave(); true");
+  if (process.platform === "darwin") {
+    for (let index = 0; index < 500 && window.isVisible(); index += 1) await new Promise(resolve => setTimeout(resolve, 20));
+    if (window.isDestroyed() || window.isVisible()) throw new Error("The macOS main window was not retained and hidden after save success");
+  } else {
+    await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error("Window did not close after save success")), 10_000))]);
+  }
+
+  const persistedResponse = await fetch(`${localURL}/api/documents/${setup.documentId}`, { headers: { Authorization: `Bearer ${setup.token}` } });
+  const persisted = await persistedResponse.json();
+  const persistedById = new Map(persisted.document.blocks.map(block => [block.id, block.content]));
+  if (!persistedResponse.ok || persisted.document.title !== "Newest title typed while native close was waiting" || persisted.document.revision !== 4 || persistedById.get(setup.firstBlockId) !== "Newest block typed while native close was waiting" || persistedById.get(setup.untouchedBlockIds[0]) !== "Untouched second block" || persistedById.get(setup.untouchedBlockIds[1]) !== "Untouched third block") throw new Error(`Native close did not persist the latest document revision without changing untouched blocks: ${JSON.stringify(persisted)}`);
+  const result = { ok: true, actualDesktopEntrypoint: true, noEditorHandshake: true, failedSaveKeptWindow: true, failureReasonVisible: true, closeWaitedForInFlightSave: true, inFlightEditReachedNextRevision: true, forgedRequestIdRejected: true, wrongWindowReplyRejected: true, localSaveIndependentOfOnlineState: true, incrementalPayload: true, untouchedBlocksPreserved: true, platformCloseBehavior: process.platform === "darwin" ? "hidden" : "closed", persistedRevision: persisted.document.revision, evidence: "FORMAL_PATH_INTEGRATION", macOSRuntime: process.platform === "darwin" ? "FORMAL_PATH_INTEGRATION" : "NOT_CAUSALLY_VERIFIED" };
+  if (saveLifecycleResultPath) writeFileSync(saveLifecycleResultPath, JSON.stringify(result), "utf8");
+  console.log(JSON.stringify(result));
+  quitApproved = true;
+  app.quit();
+}
+
+async function runSaveQuitTest() {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || !localURL) throw new Error("Save quit test window is unavailable");
+  const setup = await window.webContents.executeJavaScript(`(async () => {
+    const wait = async (test, label) => { for (let index = 0; index < 300; index += 1) { const value = test(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error('Save quit UI timeout: ' + label); };
+    await wait(() => document.querySelector('[data-accept-privacy]') || document.querySelector('.demo-button'), 'renderer privacy or login');
+    document.querySelector('[data-accept-privacy]')?.click();
+    await wait(() => document.querySelector('.demo-button'), 'local login'); document.querySelector('.demo-button').click();
+    await wait(() => document.querySelector('.app-nav'), 'library');
+    const token = localStorage.getItem('ai-tip-token');
+    const response = await fetch('/api/documents', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token }, body: '{}' });
+    const created = await response.json(); if (!response.ok) throw new Error('Could not create quit test document: ' + response.status);
+    return { token, documentId: created.document.id };
+  })()`);
+  await window.loadURL(localURL);
+  await window.webContents.executeJavaScript(`(async () => {
+    const wait = async (test, label) => { for (let index = 0; index < 300; index += 1) { const value = test(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 20)); } throw new Error('Save quit UI timeout: ' + label); };
+    const card = await wait(() => document.querySelector('.document-card'), 'document card'); card.click();
+    await wait(() => document.querySelector('[data-editor-document="${setup.documentId}"]'), 'editor');
+    const realFetch = window.fetch.bind(window); window.__quitSaveBlocked = false; window.__quitSaveRequests = [];
+    window.fetch = async (input, init = {}) => {
+      const url = String(input instanceof Request ? input.url : input); const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (url.includes('/api/documents/${setup.documentId}/changes') && method === 'PATCH') {
+        window.__quitSaveRequests.push(JSON.parse(String(init.body || '{}'))); window.__quitSaveBlocked = true;
+        await new Promise(resolve => { window.__releaseQuitSave = resolve; });
+      }
+      return realFetch(input, init);
+    };
+    const title = document.querySelector('.document-title'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(title, 'Saved before application quit'); title.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  saveQuitTestContext = { ...setup, inFlightObserved: false, localServerAliveWhileBlocked: false, request: null };
+  app.quit();
+  for (let index = 0; index < 300; index += 1) {
+    if (window.isDestroyed()) throw new Error("Application window closed before quit save completed");
+    if (await window.webContents.executeJavaScript("window.__quitSaveBlocked === true")) break;
+    if (index === 299) throw new Error("Quit did not request a renderer save");
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  await new Promise(resolve => setTimeout(resolve, 150));
+  if (window.isDestroyed() || !localServer) throw new Error("Quit closed the window or local server while save was in flight");
+  const before = await fetch(`${localURL}/api/documents/${setup.documentId}`, { headers: { Authorization: `Bearer ${setup.token}` } });
+  const beforeBody = await before.json();
+  if (!before.ok || beforeBody.document.revision !== 1) throw new Error("Local service was unavailable or mutated before the blocked save was released");
+  const trace = await window.webContents.executeJavaScript("({ requests: window.__quitSaveRequests })");
+  if (trace.requests.length !== 1 || trace.requests[0].baseRevision !== 1 || trace.requests[0].blocks.length !== 0) throw new Error(`Quit save did not use the incremental revision path: ${JSON.stringify(trace)}`);
+  saveQuitTestContext.inFlightObserved = true;
+  saveQuitTestContext.localServerAliveWhileBlocked = true;
+  saveQuitTestContext.request = trace.requests[0];
+  await window.webContents.executeJavaScript("window.__releaseQuitSave(); true");
+}
+
 app.whenReady().then(async () => {
-  if (process.argv.includes('--smoke-test')) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), 'ai-tip-desktop-smoke-'));
+  if (process.argv.includes('--smoke-test') || saveTest) smokeDataDir ||= mkdtempSync(path.join(tmpdir(), saveQuitTest ? 'ai-tip-save-quit-data-' : saveLifecycleTest ? 'ai-tip-save-lifecycle-data-' : 'ai-tip-desktop-smoke-'));
   privacyAccepted = await ensurePrivacyConsent({
     appRoot, dataDir: smokeDataDir || app.getPath('userData'), locale: app.getLocale(),
-    onReady: process.argv.includes('--smoke-test') || startupTest ? async window => {
+    onReady: process.argv.includes('--smoke-test') || startupTest || saveTest ? async window => {
       if (localServer || managedLocalRuntime || rememberedLoginStore || smokeModelServer) throw new Error('Business services started before privacy consent');
       await window.webContents.executeJavaScript(`(async () => {
         for (let i = 0; i < 200 && document.getElementById('consent-checkbox').disabled; i++) await new Promise(r => setTimeout(r, 50));
@@ -1017,6 +1269,8 @@ app.whenReady().then(async () => {
   await createWindow();
   startupPending = false;
   app.on("activate", () => { void showMainWindow().catch(console.error); });
+  if (saveLifecycleTest) { await runSaveLifecycleTest(); return; }
+  if (saveQuitTest) { await runSaveQuitTest(); return; }
   if (startupTest) {
     const result = await mainWindow.webContents.executeJavaScript(`(async()=>{
       const wait=async(fn)=>{for(let i=0;i<300;i++){if(fn())return;await new Promise(r=>setTimeout(r,20));}throw Error('Startup UI timeout');};
@@ -1042,22 +1296,68 @@ app.whenReady().then(async () => {
   if (smokeResultPath) {
     try { writeFileSync(smokeResultPath, JSON.stringify({ ok: false, error: error instanceof Error ? error.stack || error.message : String(error) }), "utf8"); } catch {}
   }
+  if (saveLifecycleResultPath) {
+    try { writeFileSync(saveLifecycleResultPath, JSON.stringify({ ok: false, error: error instanceof Error ? error.stack || error.message : String(error) }), "utf8"); } catch {}
+  }
+  if (saveQuitResultPath) {
+    try { writeFileSync(saveQuitResultPath, JSON.stringify({ ok: false, error: error instanceof Error ? error.stack || error.message : String(error) }), "utf8"); } catch {}
+  }
   console.error(error);
-  if (!process.argv.includes('--smoke-test') && !startupTest) dialog.showErrorBox('AI Tip', `应用无法启动 / Unable to start\n${error instanceof Error ? error.message : String(error)}\n请重新安装或联系开发者 / Reinstall or contact: 2280810215@qq.com`);
+  if (!process.argv.includes('--smoke-test') && !startupTest && !saveTest) dialog.showErrorBox('AI Tip', `应用无法启动 / Unable to start\n${error instanceof Error ? error.message : String(error)}\n请重新安装或联系开发者 / Reinstall or contact: 2280810215@qq.com`);
   app.exit(1);
 });
 
-app.on("window-all-closed", () => { if (!startupPending && process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => {
+app.on("window-all-closed", () => { if (!startupPending && !saveTest && process.platform !== "darwin") app.quit(); });
+app.on("before-quit", (event) => {
+  if (quitApproved) {
+    quitting = true;
+    closeResources();
+    return;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    quitApproved = true;
+    quitting = true;
+    closeResources();
+    return;
+  }
+  event.preventDefault();
+  if (quitFlushInProgress) return;
   quitting = true;
-  if (smokeModelServer) { smokeModelServer.close(); smokeModelServer = null; smokeModelURL = ""; }
-  localServer?.close();
-  void managedLocalRuntime?.stop();
-  void managedOllamaRuntime?.stop();
-  modelDirectorySelections.clear();
-  ollamaInstallerSelections.clear();
-  for (const controller of ollamaInstallerDownloads.values()) controller.abort();
-  ollamaInstallerDownloads.clear();
-  for (const stopAccessing of modelSecurityScopeStops.splice(0)) { try { stopAccessing(); } catch {} }
-  if (smokeDataDir) { try { rmSync(smokeDataDir, { recursive: true, force: true }); } catch {} smokeDataDir = null; }
+  quitFlushInProgress = (async () => {
+    let nextAction = "cancel";
+    try {
+      await saveRequestBroker.request("app-quit");
+      if (saveQuitTest) {
+        if (!saveQuitTestContext?.inFlightObserved || !saveQuitTestContext.localServerAliveWhileBlocked || !localURL) throw new Error("Quit save test did not observe the required in-flight state");
+        const response = await fetch(`${localURL}/api/documents/${saveQuitTestContext.documentId}`, { headers: { Authorization: `Bearer ${saveQuitTestContext.token}` } });
+        const body = await response.json();
+        if (!response.ok || body.document.title !== "Saved before application quit" || body.document.revision !== 2) throw new Error(`Quit save was not persisted before resource cleanup: ${JSON.stringify(body)}`);
+        const result = { ok: true, actualDesktopEntrypoint: true, quitWaitedForInFlightSave: true, localServerAliveUntilSaveReply: true, cleanupAfterPersistedRevision: true, incrementalPayload: true, persistedRevision: body.document.revision, evidence: "FORMAL_PATH_INTEGRATION", macOSRuntime: process.platform === "darwin" ? "FORMAL_PATH_INTEGRATION" : "NOT_CAUSALLY_VERIFIED" };
+        if (saveQuitResultPath) writeFileSync(saveQuitResultPath, JSON.stringify(result), "utf8");
+        console.log(JSON.stringify(result));
+      }
+      nextAction = "quit";
+    } catch (error) {
+      if (saveQuitTest) {
+        const failure = { ok: false, error: error instanceof Error ? error.stack || error.message : String(error) };
+        if (saveQuitResultPath) { try { writeFileSync(saveQuitResultPath, JSON.stringify(failure), "utf8"); } catch {} }
+        console.error(error); app.exit(1); return;
+      }
+      quitting = false;
+      if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+      const labels = saveFailureText(error);
+      const options = { type: "error", title: labels.title, message: labels.title, detail: labels.detail, buttons: [labels.retry, labels.cancelQuit, labels.discard], defaultId: 0, cancelId: 1, noLink: true };
+      const choice = mainWindow && !mainWindow.isDestroyed() ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
+      nextAction = choice.response === 0 ? "retry" : choice.response === 2 ? "discard" : "cancel";
+    } finally {
+      quitFlushInProgress = null;
+    }
+    if (nextAction === "quit" || nextAction === "discard") {
+      quitApproved = true;
+      quitting = true;
+      setImmediate(() => app.quit());
+    } else if (nextAction === "retry") {
+      setImmediate(() => app.quit());
+    }
+  })();
 });

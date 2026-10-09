@@ -103,7 +103,7 @@ try {
   await js(`(async()=>{await skillWait(()=>!document.querySelector('[data-skill-manager]'));})()`);
   window.setContentSize(1280, 880);
   const { document } = await api('/documents', {}, 'POST');
-  const updated = await api(`/documents/${document.id}`, { blocks: document.blocks.map(b => b.type === 'paragraph' ? { ...b, content: '阅读时区分观察和结论。' } : b) }, 'PATCH');
+  const updated = await api(`/documents/${document.id}`, { baseRevision: document.revision, blocks: document.blocks.map(b => b.type === 'paragraph' ? { ...b, content: '阅读时区分观察和结论。' } : b) }, 'PATCH');
   const source = updated.document.blocks.find(b => b.type === 'paragraph');
   const { tip } = await api(`/documents/${document.id}/tips`, { blockId: source.id, selectedText: source.content, startOffset: 0, endOffset: source.content.length, prefixText: '', suffixText: '' }, 'POST');
   await api('/settings', { provider: 'custom', baseURL: `http://127.0.0.1:${model.address().port}/v1`, apiKey: 'controlled-ui-provider', model: 'fixture-model', pythonEnabled: false, reliabilityEnabled: false, webSearchEnabled: false }, 'PUT');

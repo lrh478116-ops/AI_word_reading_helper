@@ -317,7 +317,7 @@ try {
   const created = await request("/documents", { method: "POST", body: "{}" }, registered.token);
   const block = created.document.blocks[0];
   const selectedText = "云端同步验证文本";
-  await request(`/documents/${created.document.id}`, { method: "PATCH", body: JSON.stringify({ blocks: [{ ...block, content: selectedText }] }) }, registered.token);
+  await request(`/documents/${created.document.id}`, { method: "PATCH", body: JSON.stringify({ baseRevision: created.document.revision, blocks: [{ ...block, content: selectedText }] }) }, registered.token);
   const createdTip = await request(`/documents/${created.document.id}/tips`, { method: "POST", body: JSON.stringify({ blockId: block.id, selectedText, startOffset: 0, endOffset: selectedText.length, prefixText: "", suffixText: "" }) }, registered.token);
   const modelSettings = await request("/settings", {}, registered.token);
   await request("/settings", { method: "PUT", body: JSON.stringify({ ...modelSettings.settings, provider: "custom", baseURL: `http://127.0.0.1:${mockPort}/v1`, model: "supabase-sync-model", apiKey: "supabase-model-test-key", webSearchEnabled: false }) }, registered.token);
@@ -327,7 +327,7 @@ try {
   if (explicitCreatedUpload.document.cloudState !== "synced" || !documents.has(created.document.id)) throw new Error("显式上传没有写入文档或没有产生 synced 状态");
   if (!tips.get(createdTip.tip.id)?.payload?.messages?.some((message) => message.role === "assistant")) throw new Error("显式上传没有同步最终 Tip 回答");
   const uploadedTitle = documents.get(created.document.id).payload.title;
-  const modifiedAfterUpload = await request(`/documents/${created.document.id}`, { method: "PATCH", body: JSON.stringify({ title: "本地修改后待上传" }) }, registered.token);
+  const modifiedAfterUpload = await request(`/documents/${created.document.id}`, { method: "PATCH", body: JSON.stringify({ baseRevision: explicitCreatedUpload.document.revision, title: "本地修改后待上传" }) }, registered.token);
   if (modifiedAfterUpload.document.cloudState !== "modified" || documents.get(created.document.id).payload.title !== uploadedTitle) throw new Error("已同步文档本地修改后没有保持 modified，或仍自动更新云端");
   const explicitUpdate = await request(`/documents/${created.document.id}/cloud`, { method: "POST", body: "{}" }, registered.token);
   if (explicitUpdate.document.cloudState !== "synced" || documents.get(created.document.id).payload.title !== "本地修改后待上传") throw new Error("再次点击更新云端没有消费本地修改");

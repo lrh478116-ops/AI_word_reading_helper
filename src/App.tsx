@@ -17,13 +17,14 @@ import { TipMarkerButton } from "./TipMarkerButton";
 import { SkillManager } from './SkillManager';
 import { SkillPicker } from './SkillPicker';
 import { BUILD_POLICY, LOCAL_EDITION } from './edition';
+import { applyVersionedDocumentSaveReceipt, DocumentSaveCoordinator, type DocumentSaveStatus, type VersionedDocumentSaveBatch as DocumentSaveBatch, type VersionedDocumentSaveReceipt as DocumentSaveReceipt } from './document-save-coordinator';
 import { PROVIDER_REGISTRY, PROVIDER_REGISTRY_VERIFIED_AT, providerDefinition } from "./providers";
 import type { AiRuntimeStatus, AiSettings, AiSettingsInput, ApiProvider, BlockType, ChatSelectionInfo, CloudUsage, DocumentBlock, DocumentItem, PdfSelectionInfo, PdfTableData, SelectionInfo, SkillTrace, TipMessage, TipThread, User } from "./types";
 import type { LocalModelCatalogItem, OllamaRuntimeInfo } from "./local-models";
 import { buildTipForest, httpLinkRanges, plainMessageContent, visibleTipLayout, type TipTreeNode } from "./tip-tree";
 
 type Screen = { type: "library"; tab: "all" | "favorites" | "trash" } | { type: "editor"; id: string };
-type SaveState = "saved" | "saving" | "error" | "offline";
+type SaveState = DocumentSaveStatus;
 type Translate = (key: string, variables?: Record<string, string | number>) => string;
 type ImportPhase = "idle" | "dragging" | "saving" | "uploading";
 
@@ -998,11 +999,11 @@ function TipPanel({ progressStage, tip, childTips, modelStatus, webSearchEnabled
   );
 }
 
-function SaveIndicator({ state }: { state: SaveState }) {
+function SaveIndicator({ state, error }: { state: SaveState; error?: string }) {
   const { t } = useI18n();
   if (state === "saving") return <span className="save-state"><LoaderCircle className="spin" size={14} />{t("save.saving")}</span>;
-  if (state === "error") return <span className="save-state error"><CloudOff size={14} />{t("save.failed")}</span>;
-  if (state === "offline") return <span className="save-state error"><CloudOff size={14} />{t("save.offline")}</span>;
+  if (state === "pending") return <span className="save-state"><Clock3 size={14} />{t("save.pending")}</span>;
+  if (state === "error") return <span className="save-state error" role="alert" title={error}><CloudOff size={14} />{error ? `${t("save.failed")}：${error}` : t("save.failed")}</span>;
   return <span className="save-state"><Check size={14} />{t("save.saved")}</span>;
 }
 
@@ -1015,6 +1016,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   const [activeTipId, setActiveTipId] = useState<string | null>(null);
   const [selection, setSelection] = useState<SelectionInfo | PdfSelectionInfo | ChatSelectionInfo | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [saveError, setSaveError] = useState("");
   const [error, setError] = useState("");
   const [progressStage, setProgressStage] = useState<TipStage>("preparing"); const [streamingText, setStreamingText] = useState("");
   const [streamingSkills, setStreamingSkills] = useState<SkillTrace[]>([]);
@@ -1029,17 +1031,27 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   const [webSearchEnabled, setWebSearchEnabled] = useState<boolean | null>(null);
   const [webSearchBusy, setWebSearchBusy] = useState(false);
   const [cloudOperation, setCloudOperation] = useState<"upload" | "delete" | null>(null);
-  const dirty = useRef(false);
   const editVersion = useRef(0);
   const documentRef = useRef<DocumentItem | null>(null);
-  const saveInFlight = useRef<Promise<void> | null>(null);
+  const titleDirtyVersion = useRef<number | null>(null);
+  const blockDirtyVersions = useRef(new Map<string, number>());
+  const newBlockIds = useRef(new Set<string>());
   const controller = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
-    try { const result = await api.document(id); setDocumentItem(result.document); setTips(result.tips); }
-    catch (err) { setError(err instanceof Error ? err.message : t("editor.loadFailed")); }
-  }, [id, t]);
-  useEffect(() => { void load(); return () => controller.current?.abort(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    void api.document(id).then((result) => {
+      if (!active) return;
+      editVersion.current = 0;
+      titleDirtyVersion.current = null;
+      blockDirtyVersions.current.clear();
+      newBlockIds.current.clear();
+      documentRef.current = result.document;
+      setDocumentItem(result.document);
+      setTips(result.tips);
+    }).catch((err) => { if (active) setError(err instanceof Error ? err.message : "文档加载失败 / Document loading failed"); });
+    return () => { active = false; controller.current?.abort(); };
+  }, [id]);
   useEffect(() => {
     if (documentItem?.id !== id) return;
     const ctrl = new AbortController();
@@ -1068,45 +1080,67 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   }, [settingsRevision]);
   useLayoutEffect(() => { documentRef.current = documentItem; }, [documentItem]);
 
-  const saveNow = useCallback(async () => {
-    while (dirty.current) {
-      if (saveInFlight.current) {
-        await saveInFlight.current;
-        continue;
-      }
-      const snapshot = documentRef.current;
-      if (!snapshot) return;
-      const savingVersion = editVersion.current;
-      setSaveState(navigator.onLine ? "saving" : "offline");
-      const request = api.updateDocument(snapshot.id, { title: snapshot.title, blocks: snapshot.blocks }).then(() => {
-        if (editVersion.current === savingVersion) dirty.current = false;
-      });
-      saveInFlight.current = request;
-      try { await request; }
-      catch (error) { setSaveState(navigator.onLine ? "error" : "offline"); throw error; }
-      finally { if (saveInFlight.current === request) saveInFlight.current = null; }
-    }
-    setSaveState("saved");
+  const captureSaveBatch = useCallback((): DocumentSaveBatch | null => {
+    const snapshot = documentRef.current;
+    if (!snapshot) return null;
+    const version = editVersion.current;
+    const titleVersion = titleDirtyVersion.current !== null && titleDirtyVersion.current <= version ? titleDirtyVersion.current : null;
+    const blockVersions = Object.fromEntries([...blockDirtyVersions.current.entries()].filter(([, dirtyVersion]) => dirtyVersion <= version));
+    const blockIds = Object.keys(blockVersions);
+    if (titleVersion === null && blockIds.length === 0) return null;
+    const blocksById = new Map(snapshot.blocks.map((block) => [block.id, block]));
+    const blocks = blockIds.map((blockId) => blocksById.get(blockId));
+    if (blocks.some((block) => !block)) throw new Error("待保存的文档块已从当前文档中消失");
+    return {
+      documentId: snapshot.id,
+      baseRevision: snapshot.revision,
+      clientEditId: crypto.randomUUID(),
+      editVersion: version,
+      title: titleVersion === null ? undefined : snapshot.title,
+      titleVersion,
+      blocks: blocks as DocumentBlock[],
+      blockVersions,
+      newBlockIds: blockIds.filter((blockId) => newBlockIds.current.has(blockId))
+    };
   }, []);
+
+  const persistSaveBatch = useCallback(async (batch: DocumentSaveBatch) => {
+    return await api.saveDocumentChanges(batch.documentId, {
+      baseRevision: batch.baseRevision,
+      clientEditId: batch.clientEditId,
+      ...(batch.titleVersion === null ? {} : { title: batch.title }),
+      blocks: batch.blocks,
+      newBlockIds: batch.newBlockIds
+    });
+  }, []);
+
+  const commitSaveBatch = useCallback((batch: DocumentSaveBatch, receipt: DocumentSaveReceipt) => {
+    const current = documentRef.current;
+    if (!current || current.id !== batch.documentId) throw new Error("保存完成时当前文档已经改变");
+    const applied = applyVersionedDocumentSaveReceipt(current, batch, receipt, { titleVersion: titleDirtyVersion.current, blockVersions: blockDirtyVersions.current, newBlockIds: newBlockIds.current });
+    if (applied.titleConfirmed) titleDirtyVersion.current = null;
+    const next = applied.document;
+    documentRef.current = next;
+    setDocumentItem(next);
+  }, []);
+
+  const saveCoordinator = useMemo(() => new DocumentSaveCoordinator<DocumentSaveBatch, DocumentSaveReceipt>({
+    capture: captureSaveBatch,
+    persist: persistSaveBatch,
+    commit: commitSaveBatch,
+    idleDelayMs: 350,
+    maximumDelayMs: 2_000,
+    onStateChange: (state) => { setSaveState(state.status); setSaveError(state.error); }
+  }), [captureSaveBatch, commitSaveBatch, persistSaveBatch]);
+
+  useEffect(() => () => saveCoordinator.dispose(), [saveCoordinator]);
+
+  const saveNow = useCallback(() => saveCoordinator.flush(), [saveCoordinator]);
 
   useEffect(() => {
     onRegisterSave(saveNow);
     return () => onRegisterSave(null);
   }, [onRegisterSave, saveNow]);
-
-  useEffect(() => {
-    if (!dirty.current || !documentItem) return;
-    setSaveState(navigator.onLine ? "saving" : "offline");
-    const timer = window.setTimeout(() => { void saveNow().catch(() => undefined); }, 900);
-    return () => window.clearTimeout(timer);
-  }, [documentItem, saveNow]);
-
-  useEffect(() => {
-    const online = () => { if (dirty.current) setSaveState("saving"); };
-    const offline = () => setSaveState("offline");
-    window.addEventListener("online", online); window.addEventListener("offline", offline);
-    return () => { window.removeEventListener("online", online); window.removeEventListener("offline", offline); };
-  }, []);
 
   const updateBlock = (blockId: string, patch: EditableBlockPatch) => {
     const current = documentRef.current;
@@ -1114,18 +1148,18 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
     const next = { ...current, blocks: current.blocks.map((b) => b.id === blockId ? { ...b, ...patch, updatedAt: new Date().toISOString() } : b) };
     documentRef.current = next;
     setDocumentItem(next);
-    dirty.current = true; editVersion.current += 1;
+    editVersion.current += 1; blockDirtyVersions.current.set(blockId, editVersion.current); saveCoordinator.markDirty();
   };
   const updateTitle = (title: string) => {
     const current = documentRef.current;
     if (!current) return;
     const next = { ...current, title };
     documentRef.current = next;
-    setDocumentItem(next); dirty.current = true; editVersion.current += 1;
+    setDocumentItem(next); editVersion.current += 1; titleDirtyVersion.current = editVersion.current; saveCoordinator.markDirty();
   };
   const manualSave = async () => {
     try { await saveNow(); }
-    catch { setSaveState("error"); }
+    catch { /* The coordinator preserves dirty state and publishes the concrete error. */ }
   };
   const uploadCloud = async () => {
     setCloudOperation("upload"); setError("");
@@ -1146,7 +1180,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   };
   const leaveEditor = async () => {
     try { await saveNow(); onBack(); }
-    catch { setSaveState("error"); }
+    catch { /* Stay in the editor; the save indicator exposes the concrete failure. */ }
   };
   useEffect(() => {
     const saveShortcut = (event: KeyboardEvent) => {
@@ -1162,11 +1196,12 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
     const newBlock: DocumentBlock = { id: crypto.randomUUID(), documentId: current.id, type, content: "", level: type === "heading" ? 2 : undefined, order: current.blocks.length, contentHash: "", createdAt: stamp, updatedAt: stamp };
     const next = { ...current, blocks: [...current.blocks, newBlock] };
     documentRef.current = next;
-    setDocumentItem(next); dirty.current = true; editVersion.current += 1;
+    setDocumentItem(next); editVersion.current += 1; blockDirtyVersions.current.set(newBlock.id, editVersion.current); newBlockIds.current.add(newBlock.id); saveCoordinator.markDirty();
   };
   const createTip = async () => {
     if (!selection || !documentItem) return;
     try {
+      await saveNow();
       let tip: TipThread;
       if (selection.source === "document") {
         const target = documentItem.blocks.find((b) => b.id === selection.blockId);
@@ -1193,9 +1228,12 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
     if (isStreaming || !modelStatus?.configured) return;
     setProgressStage("preparing"); setIsStreaming(true); setStreamingTipId(tipId); setStreamingText(""); setStreamingSkills([]); setChatError(""); setChatErrorTipId(null);
     const ctrl = new AbortController(); controller.current = ctrl;
-    setTips((current) => current.map((tip) => tip.id === tipId ? { ...tip, messages: [...tip.messages, { id: `temp-${Date.now()}`, tipId: tip.id, role: "user", content: question, createdAt: new Date().toISOString() }] } : tip));
+    const temporaryMessageId = `temp-${crypto.randomUUID()}`;
+    let chatRequestStarted = false;
+    setTips((current) => current.map((tip) => tip.id === tipId ? { ...tip, messages: [...tip.messages, { id: temporaryMessageId, tipId: tip.id, role: "user", content: question, createdAt: new Date().toISOString() }] } : tip));
     try {
       await saveNow(); ctrl.signal.throwIfAborted();
+      chatRequestStarted = true;
       const finalTip = await api.streamTip(tipId, question, language, ctrl.signal, (chunk) => setStreamingText((text) => text + chunk), (skill) => setStreamingSkills((current) => [...current, skill]), setProgressStage, () => setStreamingText(''));
       setTips((current) => current.map((tip) => tip.id === tipId ? finalTip : tip)); setStreamingText(""); setStreamingSkills([]);
     } catch (err) {
@@ -1205,7 +1243,12 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
       } else {
         setChatError(language === 'en' ? 'Generation stopped. The unfinished answer was not saved.' : '已停止生成，未完成的回答不会保存。'); setChatErrorTipId(tipId);
       }
-      await load();
+      if (chatRequestStarted) {
+        try { const result = await api.document(id); setTips(result.tips); }
+        catch { /* Preserve the visible error and local document instead of replacing either with stale state. */ }
+      } else {
+        setTips((current) => current.map((tip) => tip.id === tipId ? { ...tip, messages: tip.messages.filter((message) => message.id !== temporaryMessageId) } : tip));
+      }
     } finally { setIsStreaming(false); setStreamingTipId(null); controller.current = null; }
   };
   const toggleWebSearch = async (tipId: string) => {
@@ -1244,7 +1287,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
   const outline = documentItem?.blocks.filter((b) => b.type === "heading") || [];
 
   if (error && !documentItem) return <div className="fatal-state"><CircleHelp size={30} /><h2>{t("editor.openFailed")}</h2><p>{error}</p><button className="secondary" onClick={onBack}><ArrowLeft size={16} />{t("editor.library")}</button></div>;
-  if (!documentItem) return <div className="loading-state fullscreen"><LoaderCircle className="spin" /><span>{t("editor.opening")}</span></div>;
+  if (!documentItem || documentItem.id !== id) return <div className="loading-state fullscreen"><LoaderCircle className="spin" /><span>{t("editor.opening")}</span></div>;
   const renderTipPanel = (tip: TipThread, contextMode = false) => <TipPanel
     key={`${contextMode ? "context" : "active"}-${tip.id}`} tip={tip} childTips={childrenOf(tip.id)} contextMode={contextMode}
     modelStatus={modelStatus} webSearchEnabled={webSearchEnabled} webSearchBusy={webSearchBusy}
@@ -1268,7 +1311,7 @@ function EditorScreen({ id, cloudEnabled, settingsRevision, onBack, onSettings, 
       {leftTip ? renderTipPanel(leftTip, true) : <main className="editor-main">
         <header className="editor-topbar">
           <div>{!navOpen && <button className="icon-button" onClick={() => setNavOpen(true)}><Menu size={18} /></button>}<div className="doc-breadcrumb"><FileText size={16} /><span>{documentItem.title || t("editor.untitled")}</span></div></div>
-          <div className="editor-controls"><SaveIndicator state={saveState} /><button className="secondary compact" onClick={() => void manualSave()}><HardDrive size={15} />{t("common.save")}</button>{cloudEnabled && <button className="secondary compact cloud-upload-button" disabled={cloudOperation !== null || documentItem.cloudState === "synced"} onClick={() => void uploadCloud()}>{cloudOperation === "upload" ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{cloudOperation === "upload" ? t("cloud.uploading") : documentItem.cloudState === "synced" ? t("cloud.synced") : documentItem.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}{cloudEnabled && Boolean(documentItem.cloudSyncedAt) && <button className="secondary compact cloud-delete-button" data-delete-cloud-file={documentItem.id} disabled={cloudOperation !== null} onClick={() => void removeCloud()}>{cloudOperation === "delete" ? <LoaderCircle className="spin" size={15} /> : <CloudOff size={15} />}{cloudOperation === "delete" ? t("cloud.deleting") : t("cloud.remove")}</button>}<button className={`icon-button ${documentItem.favorite ? "starred" : ""}`} onClick={async () => { const favorite = !documentItem.favorite; setDocumentItem({ ...documentItem, favorite }); await api.updateDocument(documentItem.id, { favorite }); }}><Star size={17} fill={documentItem.favorite ? "currentColor" : "none"} /></button><button className="icon-button" onClick={onSettings} title={t("editor.settings")}><Settings size={18} /></button></div>
+          <div className="editor-controls"><SaveIndicator state={saveState} error={saveError} /><button className="secondary compact" onClick={() => void manualSave()}><HardDrive size={15} />{t("common.save")}</button>{cloudEnabled && <button className="secondary compact cloud-upload-button" disabled={cloudOperation !== null || documentItem.cloudState === "synced"} onClick={() => void uploadCloud()}>{cloudOperation === "upload" ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />}{cloudOperation === "upload" ? t("cloud.uploading") : documentItem.cloudState === "synced" ? t("cloud.synced") : documentItem.cloudState === "modified" ? t("cloud.update") : t("cloud.upload")}</button>}{cloudEnabled && Boolean(documentItem.cloudSyncedAt) && <button className="secondary compact cloud-delete-button" data-delete-cloud-file={documentItem.id} disabled={cloudOperation !== null} onClick={() => void removeCloud()}>{cloudOperation === "delete" ? <LoaderCircle className="spin" size={15} /> : <CloudOff size={15} />}{cloudOperation === "delete" ? t("cloud.deleting") : t("cloud.remove")}</button>}<button className={`icon-button ${documentItem.favorite ? "starred" : ""}`} onClick={async () => { const favorite = !documentItem.favorite; const optimistic = { ...documentRef.current!, favorite }; documentRef.current = optimistic; setDocumentItem(optimistic); try { const result = await api.updateDocument(documentItem.id, { favorite }); const current = documentRef.current; if (current?.id === result.document.id) { const next = { ...current, favorite: result.document.favorite, updatedAt: result.document.updatedAt }; documentRef.current = next; setDocumentItem(next); } } catch (err) { setError(err instanceof Error ? err.message : t("editor.operationFailed")); } }}><Star size={17} fill={documentItem.favorite ? "currentColor" : "none"} /></button><button className="icon-button" onClick={onSettings} title={t("editor.settings")}><Settings size={18} /></button></div>
         </header>
         <div className="editor-scroll" onScroll={() => setSelection(null)}>
           <article className="document-page">
@@ -1327,6 +1370,25 @@ function AppContent() {
   const importBusyRef = useRef(false);
   const dragDepthRef = useRef(0);
   const registerSave = useCallback((save: (() => Promise<void>) | null) => { saveBeforeImportRef.current = save; }, []);
+
+  useEffect(() => {
+    const desktop = window.aiTipDesktop;
+    if (!desktop?.onSaveRequested) return;
+    return desktop.onSaveRequested((request) => {
+      void (async () => {
+        try {
+          await saveBeforeImportRef.current?.();
+          desktop.resolveSaveRequest(request.requestId, { ok: true });
+        } catch (error) {
+          desktop.resolveSaveRequest(request.requestId, {
+            ok: false,
+            error: error instanceof Error ? error.message : "文档保存失败 / Document save failed",
+            code: error instanceof ApiError ? error.code : "LOCAL_DOCUMENT_SAVE_FAILED"
+          });
+        }
+      })();
+    });
+  }, []);
 
   const importDocuments = useCallback(async (files: File[]) => {
     if (!files.length || importBusyRef.current) return;
@@ -1414,7 +1476,7 @@ function AppContent() {
   return <>
     <input ref={fileInputRef} data-global-document-input type="file" accept={DOCUMENT_ACCEPT} multiple hidden onChange={(event) => { const files = Array.from(event.currentTarget.files || []); event.currentTarget.value = ""; void importDocuments(files); }} />
     {localModelsOpen ? <LocalModelsScreen onBack={() => setLocalModelsOpen(false)} onConnected={() => setSettingsRevision((value) => value + 1)} /> : screen.type === "editor"
-    ? <EditorScreen id={screen.id} cloudEnabled={user.authMode === "supabase"} settingsRevision={settingsRevision} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onOpenLocalModels={openLocalModels} onOpenSkills={() => setSkillsOpen(true)} onRegisterSave={registerSave} />
+    ? <EditorScreen key={screen.id} id={screen.id} cloudEnabled={user.authMode === "supabase"} settingsRevision={settingsRevision} onBack={() => setScreen({ type: "library", tab: "all" })} onSettings={() => setSettingsOpen(true)} onOpenLocalModels={openLocalModels} onOpenSkills={() => setSkillsOpen(true)} onRegisterSave={registerSave} />
     : <LibraryScreen user={user} screen={screen} onScreen={setScreen} onUpload={() => fileInputRef.current?.click()} onLogout={() => { session.clear(); setSettingsOpen(false); setSkillsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} onSettings={() => setSettingsOpen(true)} onSkills={() => setSkillsOpen(true)} />}
     {settingsOpen && <SettingsModal user={user} onClose={() => setSettingsOpen(false)} onOpenLocalModels={openLocalModels} onOpenSkills={() => setSkillsOpen(true)} onSaved={() => setSettingsRevision((value) => value + 1)} onAccountDeleted={() => { session.clear(); setSettingsOpen(false); setSkillsOpen(false); setLocalModelsOpen(false); setImportError(""); setImportPhase("idle"); setScreen({ type: "library", tab: "all" }); setUser(null); }} />}
     {skillsOpen && <SkillManager language={language} onClose={() => setSkillsOpen(false)} />}

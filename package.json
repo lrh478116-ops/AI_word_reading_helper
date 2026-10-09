@@ -28,6 +28,7 @@
     "desktop:dist:local:mac": "node scripts/build-edition.mjs --edition local --distribution direct --pack --target dmg",
     "privacy:test": "node scripts/test-privacy-consent.mjs && electron scripts/test-privacy-consent-electron.mjs",
     "stream-rag:test": "node scripts/test-stream-runtime.mjs && node scripts/test-stream-protocol-negative.mjs && node scripts/test-document-rag.mjs && node --require ./scripts/fixtures/forbid-python-network.cjs scripts/test-python-cancellation.mjs && node scripts/test-chat-preparation-integration.mjs",
+    "save:reliability:test": "pnpm typecheck && pnpm exec tsx scripts/test-document-save-coordinator.ts && node scripts/test-save-request-broker.mjs && pnpm exec tsx scripts/test-versioned-document-save.ts && pnpm desktop:prepare && electron electron/main.mjs --save-lifecycle-test && electron electron/main.mjs --save-quit-test",
     "desktop:prepare": "node scripts/prepare-python-resources.mjs && node scripts/generate-third-party-notices.mjs && pnpm build && esbuild server/index.ts --bundle --platform=node --format=cjs --target=node20 --external:pyodide --external:pdfjs-dist/* --outfile=dist-electron/server.cjs && esbuild server/python-worker.mjs --bundle --platform=node --format=cjs --target=node20 --external:pyodide --outfile=dist-electron/python-worker.cjs",
     "desktop:dev": "pnpm desktop:prepare && concurrently -k -n web,desktop -c cyan,green \"vite\" \"wait-on http://127.0.0.1:5173 && electron electron/main.mjs --dev\"",
     "desktop:start": "pnpm desktop:prepare && electron electron/main.mjs",

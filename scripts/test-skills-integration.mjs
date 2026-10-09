@@ -366,7 +366,7 @@ try {
 
   const createdDocument = await request("/documents", { method: "POST", body: "{}" }, token);
   const seedText = "自注意力机制允许序列中的每个 Token 根据相关性聚合其他 Token 的信息。";
-  await request(`/documents/${createdDocument.document.id}`, { method: "PATCH", body: JSON.stringify({ title: "集成测试文档", blocks: [{ ...createdDocument.document.blocks[0], content: seedText }] }) }, token);
+  await request(`/documents/${createdDocument.document.id}`, { method: "PATCH", body: JSON.stringify({ baseRevision: createdDocument.document.revision, title: "集成测试文档", blocks: [{ ...createdDocument.document.blocks[0], content: seedText }] }) }, token);
   const loaded = await request(`/documents/${createdDocument.document.id}`, {}, token);
   const block = loaded.document.blocks[0];
   const created = await request(`/documents/${loaded.document.id}/tips`, { method: "POST", body: JSON.stringify({ blockId: block.id, selectedText: block.content.slice(0, 12), startOffset: 0, endOffset: 12, prefixText: "", suffixText: block.content.slice(12, 24) }) }, token);
@@ -420,7 +420,7 @@ try {
   const longAnswerEvents = await chat(created.tip.id, "LONG_ANSWER_TEST：请生成需要自动续写的完整回答。", token);
   await Promise.all([
     chat(created.tip.id, "请计算 2 + 2", token),
-    request(`/documents/${loaded.document.id}`, { method: "PATCH", body: JSON.stringify({ title: "并发写入已保留" }) }, token)
+    request(`/documents/${loaded.document.id}`, { method: "PATCH", body: JSON.stringify({ baseRevision: loaded.document.revision, title: "并发写入已保留" }) }, token)
   ]);
   const concurrentlyLoaded = await request(`/documents/${loaded.document.id}`, {}, token);
   if (concurrentlyLoaded.document.title !== "并发写入已保留" || concurrentlyLoaded.tips[0].messages.length < 8) throw new Error("数据库并发写入发生数据丢失");
@@ -532,7 +532,7 @@ try {
 
   const freshDocument = await request("/documents", { method: "POST", body: "{}" }, registered.token);
   const freshBlock = freshDocument.document.blocks[0];
-  await request(`/documents/${freshDocument.document.id}`, { method: "PATCH", body: JSON.stringify({ blocks: [{ ...freshBlock, content: "并发程序的内存一致性" }] }) }, registered.token);
+  await request(`/documents/${freshDocument.document.id}`, { method: "PATCH", body: JSON.stringify({ baseRevision: freshDocument.document.revision, blocks: [{ ...freshBlock, content: "并发程序的内存一致性" }] }) }, registered.token);
   const freshTip = await request(`/documents/${freshDocument.document.id}/tips`, { method: "POST", body: JSON.stringify({ blockId: freshBlock.id, selectedText: "并发程序", startOffset: 0, endOffset: 4, prefixText: "", suffixText: "的内存一致性" }) }, registered.token);
   const blockedBefore = (await request(`/documents/${freshDocument.document.id}`, {}, registered.token)).tips.find((item) => item.id === freshTip.tip.id).messages.length;
   const blockedProfessional = await fetch(`${base}/tips/${freshTip.tip.id}/chat`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${registered.token}` }, body: JSON.stringify({ question: "请从弱内存模型和线性一致性角度进行专业分析。" }) });

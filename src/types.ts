@@ -86,6 +86,7 @@ export interface DocumentBlock {
 export interface DocumentItem {
   id: string;
   userId: string;
+  revision: number;
   title: string;
   sourceType: "blank" | "txt" | "markdown" | "docx" | "pdf";
   originalName?: string;
