@@ -38,7 +38,7 @@ $env:AI_TIP_API_DOWNLOAD_URL = 'https://你的真实下载地址/AI-Tip-API-Setu
 pnpm desktop:dist:local:win
 ```
 
-站外本地包不再被公开下载地址阻止。没有配置真实 URL 时，邮箱上方显示“API 版下载待发布”，不提供虚假超链接；配置后显示“下载 API 版”。仓库当前无公开安装包，因此公开下载 requirement 未关闭。Windows 固定下载资产名分别为 `AI-Tip-API-Setup.exe` 和 `AI-Tip-Local-Setup.exe`，产物分别在 `release/api-direct` 和 `release/local-direct`。构建命令不自动发布 GitHub。
+站外本地包不再被公开下载地址阻止。没有配置真实 URL 时，邮箱上方显示“API 版下载待发布”，不提供虚假超链接；配置后显示“下载 API 版”。`v1.12.17` 已在 [GitHub Releases](https://github.com/lrh478116-ops/AI_word_reading_helper/releases/tag/v1.12.17) 公开发布，本地版内置链接指向该 Release 的 `AI-Tip-API-Setup.exe`。Windows 固定下载资产名分别为 `AI-Tip-API-Setup.exe` 和 `AI-Tip-Local-Setup.exe`，产物分别在 `release/api-direct` 和 `release/local-direct`。构建命令只生成候选文件，不会自动发布 GitHub；后续版本仍必须先提供真实 Release URL 并独立完成发布验证。
 
 在有正确证书/Provisioning 的 Mac 主机上：
 

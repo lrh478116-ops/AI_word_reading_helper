@@ -63,3 +63,14 @@
 - `release/AI Tip API Setup 1.12.17.exe`：204196615 bytes，SHA-256 `5f6ec6fa027f488cdf4eed291289e6a6fbd6d48a8e67666a3c82966a46809463`。
 
 当前两版 Windows EXE 交付为 VERIFIED_LOCAL；签名均 NotSigned。公开 API 下载、GitHub发布、Mac构建/签名/审核仍未执行，不在本轮本地 EXE 更新验收内。证据类别 COMPONENT_CAPABILITY，真实模型与Mac为NOT_CAUSALLY_VERIFIED。
+
+## 2026-10-09 GitHub 发布闭环
+
+上述“未公开发布”描述是生成本地候选时的历史状态。用户随后明确要求推送，本轮已把功能提交 `5fcbb9983ab28ba238e3e89b30d2f9472ac7e8f8` 推到公开仓库 `main`，并以该提交创建 [v1.12.17 Release](https://github.com/lrh478116-ops/AI_word_reading_helper/releases/tag/v1.12.17)。远端在本轮开始前新增的 `36afc492` 已保留在提交历史中；冲突后的正式行为是 Windows 关闭最后窗口即退出，macOS 关闭主窗口时隐藏，并由 Window 菜单恢复同一窗口。真实 macOS 运行仍为 `NOT_CAUSALLY_VERIFIED`。
+
+发布资产：
+
+- `AI-Tip-Local-Setup.exe`：204196972 bytes，SHA-256 `83eb0bd579075282b45de7bbea36efafd3cbfee18a545b8c04cc318903a1d9f3`；内置 API 版链接精确指向同一 Release 的 API 资产。
+- `AI-Tip-API-Setup.exe`：204196585 bytes，SHA-256 `566edd486477d67ed4025c67e6ed0fc3eb4fe7df6ffea7f06343de9844161d64`。
+
+GitHub Release API 将两项资产均标记为 `uploaded`，并返回与本地一致的 SHA-256。未携带 GitHub 凭据的 HTTPS HEAD 请求对两项下载均返回 `200 OK`，Content-Length 分别与上述字节数一致。安装包验证 run ID `681c676b-d17a-4719-a6f3-a8fc4c0ae390`，当时绑定提交 `5fcbb9983ab28ba238e3e89b30d2f9472ac7e8f8` 且 `sourceDirty=false`。两份 Windows 安装包仍为 `NotSigned`；公开可下载不等于已获代码签名、macOS 验证或 App Store 审核通过。
